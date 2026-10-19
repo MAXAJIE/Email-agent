@@ -379,11 +379,12 @@ class GmailClient:
         )
 
 
-def build_client() -> GmailClient:
+def build_client(credentials=None) -> GmailClient:
     from googleapiclient.discovery import build
 
-    from .auth import load_credentials
+    if credentials is None:
+        from .auth import load_credentials
 
-    credentials = load_credentials(interactive=True)
+        credentials = load_credentials(interactive=True)
     service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
     return GmailClient(service)

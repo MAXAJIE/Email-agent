@@ -7,3 +7,7 @@ __pycache__/
 
 # Local Gmail OAuth client values (template: scripts/gmail.env.example).
 scripts/gmail.env
+
+# SDK probe scratch (sqlite state) and IDE files; never commit.
+.tmp-sdk/
+.idea/

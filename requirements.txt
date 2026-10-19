@@ -1,5 +1,10 @@
-# Mailkeep console runtime.
+# Mailkeep runtime.
 google-api-python-client>=2.149
 google-auth-oauthlib>=1.2
 google-auth-httplib2>=0.2
 rich>=13
+# Agent layer. Without a configured model provider Mailkeep falls back to its
+# rule-based parser, so the UI still works.
+openminion>=0.1.7
+# Windows ships no IANA tz database; openminion's scheduler needs it.
+tzdata; sys_platform == "win32"

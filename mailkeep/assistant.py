@@ -34,6 +34,18 @@ class AssistantError(RuntimeError):
     """A user-facing problem, not a crash."""
 
 
+class ApprovalRequired(Exception):
+    """Raised by a deferring ``confirm`` callback (web UI / agent tool).
+
+    The write has not happened. The caller shows the preview and, on
+    approval, replays the command from ``snapshot()`` with confirmation.
+    """
+
+    def __init__(self, question: str):
+        super().__init__(question)
+        self.question = question
+
+
 def _clip(value: str, width: int) -> str:
     value = " ".join(value.split())
     return value if len(value) <= width else value[: width - 1] + "..."
@@ -106,6 +118,21 @@ class Assistant:
         self.last_query = ""
         self.last_opened: Email | None = None
         self.pending: dict | None = None
+
+    # -- state for deferred approval -------------------------------------
+    def snapshot(self) -> dict:
+        return {
+            "pending": dict(self.pending) if self.pending else None,
+            "last_results": list(self.last_results),
+            "last_query": self.last_query,
+            "last_opened": self.last_opened,
+        }
+
+    def restore(self, state: dict) -> None:
+        self.pending = dict(state["pending"]) if state["pending"] else None
+        self.last_results = list(state["last_results"])
+        self.last_query = state["last_query"]
+        self.last_opened = state["last_opened"]
 
     # -- entry point ---------------------------------------------------
     def handle(self, text: str) -> Response:
@@ -473,6 +500,15 @@ class Assistant:
 
     def _mark_read(self, intent: Intent) -> Response:
         emails = self._resolve(intent.refs)
+        self.notify(
+            Response(
+                f"Mark {len(emails)} message(s) as read?",
+                table=_table(emails),
+                hint="Answer y to apply, anything else to cancel.",
+            )
+        )
+        if not self.confirm(f"Mark {len(emails)} message(s) as read?"):
+            return Response("Cancelled. Nothing changed.")
         self.backend.label_messages(
             [email.id for email in emails], remove_label_ids=["UNREAD"]
         )

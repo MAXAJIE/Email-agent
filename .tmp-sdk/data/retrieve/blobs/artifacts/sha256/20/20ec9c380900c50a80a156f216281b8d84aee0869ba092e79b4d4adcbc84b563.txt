@@ -1,1 +1,0 @@
-source_type=skill; source_ref=artifact://sha256/63115e320ba6c28d7d9679af989e11ccd6fffaa324ab4e2248a8ff0f16c23081; scope=global; title=email-organize; tags=skill; summary=# Procedure 1.

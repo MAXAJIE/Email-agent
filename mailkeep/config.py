@@ -6,6 +6,7 @@ prints a secret value, and the token cache stays inside the project.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -16,6 +17,10 @@ ENV_FILE = ROOT / ".openminion" / "gmail.env"
 FALLBACK_ENV_FILE = ROOT / "scripts" / "gmail.env"
 TOKEN_DIR = ROOT / ".openminion" / "gmail" / "credentials"
 TOKEN_FILE = TOKEN_DIR / "mailkeep-token.json"
+# Client JSON downloaded from Google Cloud Console. Its top-level key
+# ("installed" = Desktop app, "web") decides whether the redirect URI
+# must be registered.
+CLIENT_SECRET_FILE = ROOT / ".openminion" / "client_secret.json"
 
 # `gmail.modify` covers reading, labels, trash and read state.
 # `gmail.compose` covers drafts. Mailkeep never calls messages.send().
@@ -88,37 +93,117 @@ def setting(name: str) -> str:
     return load_env_file(FALLBACK_ENV_FILE).get(name, "").strip()
 
 
-def client_config() -> dict:
-    """Return a google-auth client config dict for the OAuth client.
+def _client_file_section() -> tuple[str, dict] | None:
+    """Return ("installed"|"web", section) from the downloaded client JSON."""
+    path = Path(setting("MAILKEEP_CLIENT_SECRET_FILE") or CLIENT_SECRET_FILE)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ConfigError(f"{path} is not a valid Google client JSON: {exc}") from exc
+    for kind in ("installed", "web"):
+        section = data.get(kind)
+        if isinstance(section, dict) and section.get("client_id"):
+            return kind, section
+    raise ConfigError(f"{path} has neither an 'installed' nor a 'web' client.")
 
-    The declared redirect URI must match what `run_local_server` actually
-    sends, otherwise Google rejects the request with
-    `Error 400: redirect_uri_mismatch`.
+
+def client_type() -> str:
+    """'installed' (Desktop app) or 'web'. Env-file clients default to Desktop.
+
+    Google accepts an unregistered loopback redirect only for Desktop clients.
+    A Web client must list the exact redirect URI; sending any other URI is
+    what produces `Error 400: redirect_uri_mismatch`.
     """
-    client_id = setting("GOOGLE_OAUTH_CLIENT_ID")
-    client_secret = setting("GOOGLE_OAUTH_CLIENT_SECRET")
+    found = _client_file_section()
+    if found:
+        return found[0]
+    return "web" if setting("GOOGLE_OAUTH_CLIENT_TYPE").lower() == "web" else "installed"
+
+
+def registered_redirect_uris() -> list[str]:
+    found = _client_file_section()
+    return [str(u) for u in (found[1].get("redirect_uris") or [])] if found else []
+
+
+def client_config(redirect: str | None = None) -> dict:
+    """google-auth client config whose declared redirect equals the one sent."""
+    redirect = redirect or redirect_uri()
+    found = _client_file_section()
+    if found:
+        kind, section = found
+        client_id, client_secret = section["client_id"], section.get("client_secret", "")
+    else:
+        kind = client_type()
+        client_id = setting("GOOGLE_OAUTH_CLIENT_ID")
+        client_secret = setting("GOOGLE_OAUTH_CLIENT_SECRET")
     if not client_id or not client_secret:
         raise ConfigError(
-            "GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET are missing. "
-            f"Add them to {ENV_FILE} or {FALLBACK_ENV_FILE} "
-            "(template: scripts/gmail.env.example)."
+            "No Google OAuth client configured. Put the downloaded client JSON at "
+            f"{CLIENT_SECRET_FILE} (or paste it in the UI), or set "
+            f"GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET in {ENV_FILE}."
         )
     return {
-        "installed": {
+        kind: {
             "client_id": client_id,
             "client_secret": client_secret,
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
             "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "redirect_uris": [redirect_uri()],
+            "redirect_uris": [redirect],
         }
     }
 
 
+def save_client_file(raw: str) -> str:
+    """Validate and store a client JSON pasted into the UI. Returns its type."""
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise ConfigError(f"That is not JSON: {exc}") from exc
+    kind = next((k for k in ("installed", "web") if isinstance(data.get(k), dict)), "")
+    if not kind or not data[kind].get("client_id") or not data[kind].get("client_secret"):
+        raise ConfigError(
+            "Expected the JSON downloaded from Google Cloud Console (an 'installed' "
+            "or 'web' object with client_id and client_secret)."
+        )
+    CLIENT_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CLIENT_SECRET_FILE.write_text(json.dumps(data), encoding="utf-8")
+    try:
+        os.chmod(CLIENT_SECRET_FILE, 0o600)
+    except OSError:
+        pass
+    return kind
+
+
 def has_client_credentials() -> bool:
+    try:
+        if _client_file_section():
+            return True
+    except ConfigError:
+        return False
     return bool(
         setting("GOOGLE_OAUTH_CLIENT_ID") and setting("GOOGLE_OAUTH_CLIENT_SECRET")
     )
+
+
+# Local web UI. Google redirects back to the UI server itself. Desktop
+# clients accept this unregistered; Web clients must register it exactly.
+DEFAULT_UI_PORT = 8765
+
+
+def ui_port() -> int:
+    raw = setting("MAILKEEP_UI_PORT")
+    try:
+        port = int(raw) if raw else DEFAULT_UI_PORT
+    except ValueError:
+        return DEFAULT_UI_PORT
+    return port if 1 <= port <= 65535 else DEFAULT_UI_PORT
+
+
+def ui_redirect_uri(port: int | None = None) -> str:
+    return f"http://localhost:{port or ui_port()}/oauth/callback"
 
 
 def has_token() -> bool:

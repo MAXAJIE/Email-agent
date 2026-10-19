@@ -13,7 +13,13 @@ from rich.text import Text
 
 from .assistant import HELP_TEXT, Assistant, AssistantError
 from .auth import load_credentials, token_state
-from .config import AuthRequired, ConfigError, has_client_credentials, redirect_uri
+from .config import (
+    AuthRequired,
+    ConfigError,
+    client_type,
+    has_client_credentials,
+    ui_redirect_uri,
+)
 from .demo import DemoGmailClient
 from .gmail import GmailClient, build_client
 from .intents import parse_intent
@@ -106,7 +112,9 @@ def _once(console: Console, backend, limit: int, text: str, *, yes: bool) -> int
 def _status(console: Console) -> int:
     state = token_state()
     console.print(Text(f"OAuth client configured: {state['client_credentials']}"))
-    console.print(Text(f"OAuth redirect URI: {redirect_uri()}"))
+    if state["client_credentials"]:
+        console.print(Text(f"OAuth client type: {client_type()}"))
+    console.print(Text(f"UI redirect URI: {ui_redirect_uri()}"))
     console.print(Text(f"Token file: {state['token_file']}"))
     console.print(Text(f"Token present: {state['token_present']}"))
     if not state["client_credentials"]:
@@ -154,8 +162,8 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         nargs="?",
         default="chat",
-        choices=["chat", "login", "status"],
-        help="chat (default), login, or status",
+        choices=["chat", "ui", "login", "status", "logout"],
+        help="chat (default), ui (local window), login, status, logout",
     )
     parser.add_argument("--demo", action="store_true", help="use in-memory demo mail")
     parser.add_argument("--limit", type=int, default=20, help="max search results")
@@ -163,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
         "--no-browser", action="store_true", help="print the consent URL instead of opening a browser"
     )
     parser.add_argument("--once", default="", help="run one command and exit")
+    parser.add_argument("--port", type=int, default=0, help="ui: local port (default 8765)")
     parser.add_argument(
         "--yes",
         action="store_true",
@@ -174,6 +183,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "status":
         return _status(console)
+    if args.command == "logout":
+        from .auth import forget_token
+
+        console.print(Text("Token removed." if forget_token() else "No token stored."))
+        return 0
+    if args.command == "ui":
+        from .config import ui_port
+        from .web import serve
+
+        return serve(
+            demo=args.demo,
+            limit=limit,
+            port=args.port or ui_port(),
+            open_browser=not args.no_browser,
+        )
     if args.command == "login":
         return _login(console, open_browser=not args.no_browser)
 
