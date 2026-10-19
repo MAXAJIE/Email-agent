@@ -176,6 +176,15 @@ def resolve_mode() -> tuple[str, str]:
         return "rules", f"no OpenMinion config at {config_path()}"
     if provider == "echo":
         return "rules", "OpenMinion provider is 'echo' (no model, no tool calls)"
+    # The user's own agents.json names a provider (e.g. openrouter). OpenMinion
+    # only reads its key from the process environment, so copy it there from
+    # the env files too; before, a key in .env never reached OpenMinion.
+    known = llm.by_name(provider)
+    if known is not None and not llm.export_key(known):
+        return "rules", (
+            f"OpenMinion provider '{provider}' needs {known.key_env}, which is not set in the "
+            "environment or in .env / .openminion/gmail.env / scripts/gmail.env"
+        )
     return "openminion", f"OpenMinion provider '{provider}'"
 
 
@@ -194,6 +203,8 @@ class MailkeepAgent:
             print(f"[mailkeep] {line}", file=sys.stderr, flush=True)
         print(f"[mailkeep] chat mode: {self.mode} - {self.reason}", file=sys.stderr, flush=True)
         self._agent = None
+        self._cancel = threading.Event()
+        self._busy = threading.Event()
         self._turn = 0
         self._history: list[tuple[str, str]] = []
 
@@ -243,14 +254,45 @@ class MailkeepAgent:
                     except Exception:  # tracing must never break a turn
                         pass
 
-                result = self._ensure_agent().run_stream(
-                    self._with_history(text),
-                    on_delta=on_delta,
-                    session_id=f"{self.session_id}-{self._turn}",
-                    timeout_seconds=float(setting("MAILKEEP_AGENT_TIMEOUT") or 180),
-                    # Only our own tool may run; it gates writes itself.
-                    approval_callback=lambda name, _args, _id: name == "mailkeep_command",
-                )
+                agent = self._ensure_agent()
+                box: dict[str, object] = {}
+
+                def work() -> None:
+                    try:
+                        box["result"] = agent.run_stream(
+                            self._with_history(text),
+                            on_delta=on_delta,
+                            session_id=f"{self.session_id}-{self._turn}",
+                            timeout_seconds=float(setting("MAILKEEP_AGENT_TIMEOUT") or 180),
+                            # Only our own tool may run; it gates writes itself.
+                            approval_callback=lambda name, _args, _id: (
+                                name == "mailkeep_command" and not self._cancel.is_set()
+                            ),
+                        )
+                    except BaseException as exc:  # re-raised on the caller's thread
+                        box["error"] = exc
+
+                self._cancel.clear()
+                self._busy.set()
+                worker = threading.Thread(target=work, name="mailkeep-turn", daemon=True)
+                worker.start()
+                try:
+                    # Short waits keep Ctrl+C / cancel() responsive (also on Windows).
+                    while worker.is_alive() and not self._cancel.is_set():
+                        worker.join(0.2)
+                except KeyboardInterrupt:
+                    self._cancel.set()
+                finally:
+                    self._busy.clear()
+                if self._cancel.is_set():
+                    trace("abort", "stopped by user (Ctrl+C); conversation reset")
+                    self._abandon(agent)
+                    self._history = []
+                    return Outcome([Response("Stopped. That conversation was aborted.")],
+                                   self.session.approval)
+                if "error" in box:
+                    raise box["error"]  # type: ignore[misc]
+                result = box["result"]
                 reply = result.text.strip()
                 trace("reply", f"{reply}\n({time.monotonic() - started:.1f}s, stats={result.stats})")
                 # The runtime prefixes replies with the agent profile name.
@@ -279,6 +321,28 @@ class MailkeepAgent:
         if reply:
             responses.append(Response(reply))
         return Outcome(responses, self.session.approval)
+
+    def cancel(self) -> bool:
+        """Abort the turn in progress. True if one was running."""
+        if not self._busy.is_set():
+            return False
+        self._cancel.set()
+        return True
+
+    def _abandon(self, agent) -> None:
+        """Drop the agent whose turn was aborted; a fresh one serves the next turn.
+        The orphaned run can no longer touch the mailbox: _ACTIVE is cleared and
+        the approval callback refuses tools once cancelled."""
+        if self._agent is agent:
+            self._agent = None
+
+        def close() -> None:
+            try:
+                agent.close()
+            except Exception:
+                pass
+
+        threading.Thread(target=close, daemon=True).start()
 
     def _with_history(self, text: str) -> str:
         if not self._history:

@@ -255,11 +255,22 @@ def serve(*, demo: bool, limit: int, port: int, open_browser: bool = True) -> in
     print(f"OAuth redirect URI (register only for Web clients): {ui_redirect_uri(port)}")
     if open_browser:
         threading.Timer(0.4, open_window, args=(url,)).start()
+    runner = threading.Thread(target=server.serve_forever, name="mailkeep-http", daemon=True)
+    runner.start()
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
+        while runner.is_alive():
+            try:
+                runner.join(0.5)
+            except KeyboardInterrupt:
+                # Ctrl+C while the agent is thinking stops that turn only;
+                # Ctrl+C while idle quits the app.
+                if app.agent is not None and app.agent.cancel():
+                    print("\n[mailkeep] Ctrl+C: stopped the agent; conversation aborted. "
+                          "Press Ctrl+C again (while idle) to quit.", flush=True)
+                    continue
+                break
     finally:
+        server.shutdown()
         server.server_close()
         if app.agent:
             app.agent.close()

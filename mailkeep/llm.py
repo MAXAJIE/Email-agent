@@ -28,7 +28,7 @@ import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .config import ENV_FILE, FALLBACK_ENV_FILE, ROOT, setting
+from .config import ROOT, env_files, setting
 
 GENERATED_CONFIG = ROOT / ".openminion" / "mailkeep-agent.json"
 
@@ -42,6 +42,8 @@ class Preset:
     key_env: str
     model: str
     timeout_seconds: int = 120
+    # Other spellings people use for the same key.
+    alt_key_envs: tuple[str, ...] = ()
 
 
 PRESETS: dict[str, Preset] = {
@@ -49,11 +51,13 @@ PRESETS: dict[str, Preset] = {
     "openrouter": Preset(
         "openrouter", "OpenRouter", "openrouter", "https://openrouter.ai/api/v1",
         "OPENROUTER_API_KEY", "openai/gpt-4.1-mini",
+        alt_key_envs=("OPENROUTER_KEY", "OPEN_ROUTER_API_KEY", "OPENROUTER_TOKEN"),
     ),
     "gemini": Preset(
         "gemini", "Gemini", "openai",
         "https://generativelanguage.googleapis.com/v1beta/openai/",
         "GEMINI_API_KEY", "gemini-2.5-flash",
+        alt_key_envs=("GOOGLE_API_KEY",),
     ),
     "portal": Preset(
         "portal", "Cortensor Portal", "openai", "https://api.cortensor.app/v1",
@@ -78,7 +82,16 @@ def _opt(name: str) -> str:
 
 
 def _api_key(preset: Preset) -> str:
-    return _opt("API_KEY") or setting(preset.key_env)
+    value = _opt("API_KEY") or setting(preset.key_env)
+    for name in preset.alt_key_envs:
+        value = value or setting(name)
+    return value
+
+
+def by_name(name: str) -> Preset | None:
+    """Preset for an OpenMinion provider name taken from the user's agents.json."""
+    name = ALIASES.get(name.strip().lower(), name.strip().lower())
+    return PRESETS.get(name)
 
 
 def selected() -> Preset | None:
@@ -92,7 +105,8 @@ def selected() -> Preset | None:
             )
         preset = PRESETS[key]
     else:
-        preset = next((p for p in PRESETS.values() if setting(p.key_env)), None)
+        preset = next((p for p in PRESETS.values() if p.key != "custom" and any(
+            setting(n) for n in (p.key_env, *p.alt_key_envs))), None)
         if preset is None and _opt("API_KEY"):
             raise ValueError("MAILKEEP_LLM_API_KEY is set but MAILKEEP_LLM_PROVIDER is not")
         if preset is None:
@@ -146,7 +160,7 @@ def write_config(preset: Preset, path: Path = GENERATED_CONFIG) -> Path:
 
 def describe() -> list[str]:
     """Startup diagnostics. Never prints a key, only whether one was found."""
-    files = [f"{p} ({'found' if p.is_file() else 'missing'})" for p in (ENV_FILE, FALLBACK_ENV_FILE)]
+    files = [f"{p} ({'found' if p.is_file() else 'missing'})" for p in env_files()]
     lines = ["env files: " + "; ".join(files)]
     try:
         preset = selected()

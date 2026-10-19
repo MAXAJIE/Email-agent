@@ -1,364 +1,357 @@
-diff -ruN -x .git -x __pycache__ -x .openminion base/mailkeep/agent.py mk/mailkeep/agent.py
---- a/mailkeep/agent.py	2026-10-19 13:35:21.139166056 +0000
-+++ b/mailkeep/agent.py	2026-10-19 13:36:15.942078635 +0000
-@@ -13,7 +13,9 @@
+--- a/mailkeep/config.py
++++ b/mailkeep/config.py
+@@ -15,6 +15,9 @@
+ # Accepted as a fallback so `scripts/gmail.env` works too (the documented copy
+ # target). The canonical location stays `.openminion/gmail.env`.
+ FALLBACK_ENV_FILE = ROOT / "scripts" / "gmail.env"
++# Plain `.env` files are read too (project root first): many users keep their
++# provider key there, and before this it was silently ignored.
++DOTENV_FILES = (ROOT / ".env", ROOT / ".openminion" / ".env", ROOT / "scripts" / ".env")
+ TOKEN_DIR = ROOT / ".openminion" / "gmail" / "credentials"
+ TOKEN_FILE = TOKEN_DIR / "mailkeep-token.json"
+ # Client JSON downloaded from Google Cloud Console. Its top-level key
+@@ -85,30 +88,53 @@
  
- import json
- import os
-+import sys
- import threading
-+import time
- import uuid
- from pathlib import Path
  
-@@ -55,6 +57,34 @@
- # this lock makes that explicit so the global is safe.
- _LEAK_MARKERS = ("[CONSTRAINTS & POLICY]", "[BUDGET TELEMETRY]", "budget_envelope_status")
- _TURN_LOCK = threading.Lock()
+ def load_env_file(path: Path = ENV_FILE) -> dict[str, str]:
+-    """Read a simple KEY=VALUE file without touching the process environment."""
++    """Read a simple KEY=VALUE file without touching the process environment.
++
++    Tolerates what real-world Windows/.env files contain: a UTF-8 BOM (Notepad),
++    UTF-16, `export KEY=...`, spaces around `=`, quotes, and trailing
++    `# comments` on unquoted values.
++    """
+     values: dict[str, str] = {}
+     if not path.is_file():
+         return values
+-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+-        line = raw_line.strip()
++    raw = path.read_bytes()
++    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
++        text = raw.decode("utf-16")
++    else:
++        text = raw.decode("utf-8-sig", errors="replace")
++    for raw_line in text.splitlines():
++        line = raw_line.strip().lstrip("\ufeff")
+         if not line or line.startswith("#") or "=" not in line:
+             continue
++        if line.startswith("export "):
++            line = line[len("export "):].strip()
+         key, _, value = line.partition("=")
+         key = key.strip()
++        value = value.strip()
++        if value[:1] in {'"', "'"} and value[1:].find(value[0]) != -1:
++            value = value[1 : 1 + value[1:].find(value[0])]
++        else:
++            value = value.split(" #", 1)[0].split("\t#", 1)[0].strip()
+         if key:
+-            values[key] = value.strip().strip('"').strip("'")
++            values[key] = value
+     return values
+ 
+ 
++def env_files() -> tuple[Path, ...]:
++    """Every file `setting()` reads, in priority order."""
++    return (ENV_FILE, FALLBACK_ENV_FILE, *DOTENV_FILES)
 +
 +
-+def trace_enabled() -> bool:
-+    return setting("MAILKEEP_TRACE").strip().lower() not in {"0", "off", "false", "no"}
-+
-+
-+def trace(kind: str, text: object) -> None:
-+    """Print the agent's thinking process to the console (MAILKEEP_TRACE=0 hides it)."""
-+    if not trace_enabled():
-+        return
-+    body = str(text).strip().replace("\r", "")
-+    if len(body) > 1200:
-+        body = body[:1200] + " ..."
-+    pad = "\n" + " " * 21
-+    print(f"[mailkeep] {kind:<9}  " + pad.join(body.splitlines() or [""]), file=sys.stderr, flush=True)
-+
-+
-+def _event_text(event: object) -> tuple[str, str]:
-+    """Best-effort (kind, text) for an OpenMinion progress event (shape is undocumented)."""
-+    data = event
-+    if not isinstance(data, dict):
-+        data = getattr(event, "__dict__", None) or {"text": event}
-+    kind = str(data.get("type") or data.get("kind") or data.get("event") or "think")
-+    for field in ("reasoning", "thinking", "delta", "text", "content", "message", "status"):
-+        value = data.get(field)
+ def setting(name: str) -> str:
+-    """Process environment wins, then the project env files."""
++    """Process environment wins, then the project env files (see env_files())."""
+     value = os.environ.get(name, "").strip()
+     if value:
+         return value
+-    value = load_env_file().get(name, "").strip()
+-    if value:
+-        return value
+-    return load_env_file(FALLBACK_ENV_FILE).get(name, "").strip()
++    for path in env_files():
++        value = load_env_file(path).get(name, "").strip()
 +        if value:
-+            return kind, value if isinstance(value, str) else json.dumps(value, default=str)
-+    return kind, json.dumps(data, default=str)[:400]
- _ACTIVE: dict[str, object] = {"session": None, "outcomes": None}
++            return value
++    return ""
  
  
-@@ -74,9 +104,11 @@
-             return "STOP: too many commands this turn. Answer the user now."
-         if session.approval is not None:
-             return "AWAITING_APPROVAL: a previous write is still waiting for the user."
-+        trace("tool call", f"mailkeep_command({command!r})")
-         try:
-             outcome = session.run_command(command)
-         except Exception as exc:  # user-facing errors become tool text
-+            trace("tool err", exc)
-             return f"ERROR: {exc}"
-         outcomes.append(outcome)
-         lines = []
-@@ -88,7 +120,9 @@
-                 lines += [" | ".join(row) for row in response.table.rows[:25]]
-         if outcome.approval:
-             lines.append(f"AWAITING_APPROVAL: {outcome.approval.question}")
--        return "\n".join(lines) or "(no output)"
-+        result = "\n".join(lines) or "(no output)"
-+        trace("tool out", result)
-+        return result
- 
-     return mailkeep_command
- 
-@@ -125,8 +159,8 @@
-         return "rules", "MAILKEEP_AGENT=rules"
-     try:
-         import openminion  # noqa: F401
--    except Exception:
--        return "rules", "openminion is not installed"
-+    except Exception as exc:
-+        return "rules", f"openminion cannot be imported ({type(exc).__name__}: {exc}); run pip install -r requirements.txt"
-     from . import llm
- 
-     try:
-@@ -135,9 +169,8 @@
-         return "rules", str(exc)
-     if preset is not None:
-         if not llm.export_key(preset):
--            return "rules", f"{preset.label} selected but {preset.key_env} is not set"
--        model = setting("MAILKEEP_LLM_MODEL") or preset.model
--        return "openminion", f"{preset.label} ({model}) via OpenMinion"
-+            return "rules", f"{preset.label} selected but no API key (MAILKEEP_LLM_API_KEY or {preset.key_env})"
-+        return "openminion", f"{preset.label} ({preset.model}) via OpenMinion"
-     provider = configured_provider()
-     if not provider:
-         return "rules", f"no OpenMinion config at {config_path()}"
-@@ -155,6 +188,11 @@
-         # persist on disk across restarts (OM-01).
-         self.session_id = session_id or f"mailkeep-{uuid.uuid4().hex[:12]}"
-         self.mode, self.reason = resolve_mode()
-+        from . import llm
-+
-+        for line in llm.describe():
-+            print(f"[mailkeep] {line}", file=sys.stderr, flush=True)
-+        print(f"[mailkeep] chat mode: {self.mode} - {self.reason}", file=sys.stderr, flush=True)
-         self._agent = None
-         self._turn = 0
-         self._history: list[tuple[str, str]] = []
-@@ -195,14 +233,26 @@
-                 # session_id. Use a fresh session per turn and carry a short
-                 # transcript ourselves; numbered refs live in Session anyway.
-                 self._turn += 1
--                result = self._ensure_agent().run(
-+                started = time.monotonic()
-+                trace("user", text)
-+
-+                def on_delta(event: object) -> None:
-+                    try:
-+                        kind, body = _event_text(event)
-+                        trace(kind[:9], body)
-+                    except Exception:  # tracing must never break a turn
-+                        pass
-+
-+                result = self._ensure_agent().run_stream(
-                     self._with_history(text),
-+                    on_delta=on_delta,
-                     session_id=f"{self.session_id}-{self._turn}",
-                     timeout_seconds=float(setting("MAILKEEP_AGENT_TIMEOUT") or 180),
-                     # Only our own tool may run; it gates writes itself.
-                     approval_callback=lambda name, _args, _id: name == "mailkeep_command",
-                 )
-                 reply = result.text.strip()
-+                trace("reply", f"{reply}\n({time.monotonic() - started:.1f}s, stats={result.stats})")
-                 # The runtime prefixes replies with the agent profile name.
-                 if reply.lower().startswith("openminion:"):
-                     reply = reply.split(":", 1)[1].strip()
-@@ -216,6 +266,7 @@
-             except (ProviderError, TurnTimeoutError) as exc:
-                 why = (f"Model provider failed ({exc.code}): {exc.message}"
-                        if isinstance(exc, ProviderError) else f"Agent turn timed out ({exc})")
-+                trace("error", why)
-                 outcomes.append(Outcome([Response(
-                     f"{why}. Answered with the rule-based parser instead."
-                 )]))
-diff -ruN -x .git -x __pycache__ -x .openminion base/mailkeep/llm.py mk/mailkeep/llm.py
---- a/mailkeep/llm.py	2026-10-19 13:35:22.442836204 +0000
-+++ b/mailkeep/llm.py	2026-10-19 13:35:58.072661959 +0000
-@@ -1,15 +1,18 @@
--"""Model provider presets for the OpenMinion agent (Portal, Gemini, OpenRouter).
-+"""Model provider settings for the OpenMinion agent.
- 
--Set in `.openminion/gmail.env`:
-+Everything is configured in `.openminion/gmail.env`; nothing else to edit:
- 
--    MAILKEEP_LLM_PROVIDER=portal        # portal | gemini | openrouter
--    CORTENSOR_API_KEY=...               # or GEMINI_API_KEY / OPENROUTER_API_KEY
--    MAILKEEP_LLM_MODEL=...              # optional override
-+    MAILKEEP_LLM_PROVIDER=openrouter    # openrouter | gemini | portal | openai | custom
-+    MAILKEEP_LLM_MODEL=openai/gpt-4.1-mini
-+    MAILKEEP_LLM_API_KEY=sk-or-...      # or the provider's own name (OPENROUTER_API_KEY, ...)
-+    MAILKEEP_LLM_BASE_URL=              # optional; required for "custom"
-+
-+Short aliases LLM_PROVIDER / LLM_MODEL / LLM_API_KEY / LLM_BASE_URL also work.
-+Without MAILKEEP_LLM_PROVIDER the first provider whose key is present wins
-+(OpenRouter, Gemini, Cortensor Portal, OpenAI).
- 
- Mailkeep then writes `.openminion/mailkeep-agent.json` itself, because:
- 
--* OpenMinion 0.1.7 has ONE `openai` provider slot. Cortensor Portal and Gemini
--  are both "openai-compatible", so switching means rewriting that slot.
- * `config init` writes `providers` *and* `system.providers`; the second one
-   silently wins (report OM-02). The generated file has no `system` block.
- * An agent without `default_channel` fails every turn with
-@@ -22,10 +25,10 @@
- 
- import json
- import os
--from dataclasses import dataclass
-+from dataclasses import dataclass, replace
+ def _client_file_section() -> tuple[str, dict] | None:
+--- a/mailkeep/llm.py
++++ b/mailkeep/llm.py
+@@ -28,7 +28,7 @@
+ from dataclasses import dataclass, replace
  from pathlib import Path
  
--from .config import ROOT, setting
-+from .config import ENV_FILE, FALLBACK_ENV_FILE, ROOT, setting
+-from .config import ENV_FILE, FALLBACK_ENV_FILE, ROOT, setting
++from .config import ROOT, env_files, setting
  
  GENERATED_CONFIG = ROOT / ".openminion" / "mailkeep-agent.json"
  
-@@ -42,38 +45,79 @@
+@@ -42,6 +42,8 @@
+     key_env: str
+     model: str
+     timeout_seconds: int = 120
++    # Other spellings people use for the same key.
++    alt_key_envs: tuple[str, ...] = ()
  
  
  PRESETS: dict[str, Preset] = {
--    # Values from openminion/modules/llm/setup_catalog.py (0.1.7).
--    "portal": Preset(
--        "portal", "Cortensor Portal", "openai", "https://api.cortensor.app/v1",
--        "CORTENSOR_API_KEY", "oss-20b", timeout_seconds=480,
-+    # Order = auto-detect priority when no provider is named.
-+    "openrouter": Preset(
-+        "openrouter", "OpenRouter", "openrouter", "https://openrouter.ai/api/v1",
-+        "OPENROUTER_API_KEY", "openai/gpt-4.1-mini",
+@@ -49,11 +51,13 @@
+     "openrouter": Preset(
+         "openrouter", "OpenRouter", "openrouter", "https://openrouter.ai/api/v1",
+         "OPENROUTER_API_KEY", "openai/gpt-4.1-mini",
++        alt_key_envs=("OPENROUTER_KEY", "OPEN_ROUTER_API_KEY", "OPENROUTER_TOKEN"),
      ),
      "gemini": Preset(
          "gemini", "Gemini", "openai",
          "https://generativelanguage.googleapis.com/v1beta/openai/",
          "GEMINI_API_KEY", "gemini-2.5-flash",
++        alt_key_envs=("GOOGLE_API_KEY",),
      ),
--    "openrouter": Preset(
--        "openrouter", "OpenRouter", "openrouter", "https://openrouter.ai/api/v1",
--        "OPENROUTER_API_KEY", "openai/gpt-4.1-mini",
-+    "portal": Preset(
-+        "portal", "Cortensor Portal", "openai", "https://api.cortensor.app/v1",
-+        "CORTENSOR_API_KEY", "oss-20b", timeout_seconds=480,
-+    ),
-+    "openai": Preset(
-+        "openai", "OpenAI", "openai", "https://api.openai.com/v1",
-+        "OPENAI_API_KEY", "gpt-4.1-mini",
-+    ),
-+    # Any OpenAI-compatible endpoint: set MAILKEEP_LLM_BASE_URL + model + key.
-+    "custom": Preset(
-+        "custom", "Custom (OpenAI-compatible)", "openai", "",
-+        "MAILKEEP_LLM_API_KEY", "",
-     ),
- }
-+ALIASES = {"cortensor": "portal", "google": "gemini", "or": "openrouter"}
+     "portal": Preset(
+         "portal", "Cortensor Portal", "openai", "https://api.cortensor.app/v1",
+@@ -78,7 +82,16 @@
+ 
+ 
+ def _api_key(preset: Preset) -> str:
+-    return _opt("API_KEY") or setting(preset.key_env)
++    value = _opt("API_KEY") or setting(preset.key_env)
++    for name in preset.alt_key_envs:
++        value = value or setting(name)
++    return value
 +
 +
-+def _opt(name: str) -> str:
-+    """MAILKEEP_LLM_<NAME>, falling back to the short LLM_<NAME> alias."""
-+    return setting(f"MAILKEEP_LLM_{name}") or setting(f"LLM_{name}")
-+
-+
-+def _api_key(preset: Preset) -> str:
-+    return _opt("API_KEY") or setting(preset.key_env)
++def by_name(name: str) -> Preset | None:
++    """Preset for an OpenMinion provider name taken from the user's agents.json."""
++    name = ALIASES.get(name.strip().lower(), name.strip().lower())
++    return PRESETS.get(name)
  
  
  def selected() -> Preset | None:
--    """The configured preset, or None when the user did not pick one."""
--    key = setting("MAILKEEP_LLM_PROVIDER").strip().lower()
--    if not key:
--        # No explicit choice: use whichever API key is present in gmail.env.
--        for preset in PRESETS.values():
--            if setting(preset.key_env):
--                return preset
--        return None
--    if key not in PRESETS:
--        raise ValueError(f"MAILKEEP_LLM_PROVIDER={key!r}; use one of {', '.join(PRESETS)}")
--    return PRESETS[key]
-+    """The configured provider (with model/base URL overrides applied)."""
-+    key = _opt("PROVIDER").strip().lower()
-+    key = ALIASES.get(key, key)
-+    if key:
-+        if key not in PRESETS:
-+            raise ValueError(
-+                f"MAILKEEP_LLM_PROVIDER={key!r} is unknown; use one of {', '.join(PRESETS)}"
-+            )
-+        preset = PRESETS[key]
-+    else:
-+        preset = next((p for p in PRESETS.values() if setting(p.key_env)), None)
-+        if preset is None and _opt("API_KEY"):
-+            raise ValueError("MAILKEEP_LLM_API_KEY is set but MAILKEEP_LLM_PROVIDER is not")
-+        if preset is None:
-+            return None
-+    preset = replace(
-+        preset,
-+        model=_opt("MODEL") or preset.model,
-+        base_url=_opt("BASE_URL") or preset.base_url,
-+    )
-+    if not preset.model:
-+        raise ValueError(f"{preset.label}: set MAILKEEP_LLM_MODEL")
-+    if not preset.base_url:
-+        raise ValueError(f"{preset.label}: set MAILKEEP_LLM_BASE_URL")
-+    return preset
+@@ -92,7 +105,8 @@
+             )
+         preset = PRESETS[key]
+     else:
+-        preset = next((p for p in PRESETS.values() if setting(p.key_env)), None)
++        preset = next((p for p in PRESETS.values() if p.key != "custom" and any(
++            setting(n) for n in (p.key_env, *p.alt_key_envs))), None)
+         if preset is None and _opt("API_KEY"):
+             raise ValueError("MAILKEEP_LLM_API_KEY is set but MAILKEEP_LLM_PROVIDER is not")
+         if preset is None:
+@@ -146,7 +160,7 @@
+ 
+ def describe() -> list[str]:
+     """Startup diagnostics. Never prints a key, only whether one was found."""
+-    files = [f"{p} ({'found' if p.is_file() else 'missing'})" for p in (ENV_FILE, FALLBACK_ENV_FILE)]
++    files = [f"{p} ({'found' if p.is_file() else 'missing'})" for p in env_files()]
+     lines = ["env files: " + "; ".join(files)]
+     try:
+         preset = selected()
+--- a/mailkeep/agent.py
++++ b/mailkeep/agent.py
+@@ -176,6 +176,15 @@
+         return "rules", f"no OpenMinion config at {config_path()}"
+     if provider == "echo":
+         return "rules", "OpenMinion provider is 'echo' (no model, no tool calls)"
++    # The user's own agents.json names a provider (e.g. openrouter). OpenMinion
++    # only reads its key from the process environment, so copy it there from
++    # the env files too; before, a key in .env never reached OpenMinion.
++    known = llm.by_name(provider)
++    if known is not None and not llm.export_key(known):
++        return "rules", (
++            f"OpenMinion provider '{provider}' needs {known.key_env}, which is not set in the "
++            "environment or in .env / .openminion/gmail.env / scripts/gmail.env"
++        )
+     return "openminion", f"OpenMinion provider '{provider}'"
  
  
- def build_config(preset: Preset) -> dict:
-+    provider = {
-+        "model": preset.model,
-+        "base_url": preset.base_url,
-+        "api_key_env": preset.key_env,
-+        "timeout_seconds": preset.timeout_seconds,
-+    }
-+    if preset.slot == "openrouter":
-+        provider["app_name"] = "mailkeep"
-     return {
-         "agents": {
-             "openminion": {
-@@ -82,21 +126,15 @@
-                 "default_channel": "console",
-             }
-         },
--        "providers": {
--            preset.slot: {
--                "model": setting("MAILKEEP_LLM_MODEL") or preset.model,
--                "base_url": preset.base_url,
--                "api_key_env": preset.key_env,
--                "timeout_seconds": preset.timeout_seconds,
--            }
--        },
-+        "providers": {preset.slot: provider},
-     }
+@@ -194,6 +203,8 @@
+             print(f"[mailkeep] {line}", file=sys.stderr, flush=True)
+         print(f"[mailkeep] chat mode: {self.mode} - {self.reason}", file=sys.stderr, flush=True)
+         self._agent = None
++        self._cancel = threading.Event()
++        self._busy = threading.Event()
+         self._turn = 0
+         self._history: list[tuple[str, str]] = []
  
+@@ -243,14 +254,45 @@
+                     except Exception:  # tracing must never break a turn
+                         pass
  
- def export_key(preset: Preset) -> bool:
--    value = setting(preset.key_env)
-+    """Put the key where OpenMinion looks (process env, under key_env)."""
-+    value = _api_key(preset)
-     if value:
--        os.environ.setdefault(preset.key_env, value)
-+        os.environ[preset.key_env] = value
-     return bool(value)
+-                result = self._ensure_agent().run_stream(
+-                    self._with_history(text),
+-                    on_delta=on_delta,
+-                    session_id=f"{self.session_id}-{self._turn}",
+-                    timeout_seconds=float(setting("MAILKEEP_AGENT_TIMEOUT") or 180),
+-                    # Only our own tool may run; it gates writes itself.
+-                    approval_callback=lambda name, _args, _id: name == "mailkeep_command",
+-                )
++                agent = self._ensure_agent()
++                box: dict[str, object] = {}
++
++                def work() -> None:
++                    try:
++                        box["result"] = agent.run_stream(
++                            self._with_history(text),
++                            on_delta=on_delta,
++                            session_id=f"{self.session_id}-{self._turn}",
++                            timeout_seconds=float(setting("MAILKEEP_AGENT_TIMEOUT") or 180),
++                            # Only our own tool may run; it gates writes itself.
++                            approval_callback=lambda name, _args, _id: (
++                                name == "mailkeep_command" and not self._cancel.is_set()
++                            ),
++                        )
++                    except BaseException as exc:  # re-raised on the caller's thread
++                        box["error"] = exc
++
++                self._cancel.clear()
++                self._busy.set()
++                worker = threading.Thread(target=work, name="mailkeep-turn", daemon=True)
++                worker.start()
++                try:
++                    # Short waits keep Ctrl+C / cancel() responsive (also on Windows).
++                    while worker.is_alive() and not self._cancel.is_set():
++                        worker.join(0.2)
++                except KeyboardInterrupt:
++                    self._cancel.set()
++                finally:
++                    self._busy.clear()
++                if self._cancel.is_set():
++                    trace("abort", "stopped by user (Ctrl+C); conversation reset")
++                    self._abandon(agent)
++                    self._history = []
++                    return Outcome([Response("Stopped. That conversation was aborted.")],
++                                   self.session.approval)
++                if "error" in box:
++                    raise box["error"]  # type: ignore[misc]
++                result = box["result"]
+                 reply = result.text.strip()
+                 trace("reply", f"{reply}\n({time.monotonic() - started:.1f}s, stats={result.stats})")
+                 # The runtime prefixes replies with the agent profile name.
+@@ -280,6 +322,28 @@
+             responses.append(Response(reply))
+         return Outcome(responses, self.session.approval)
  
- 
-@@ -104,3 +142,22 @@
-     path.parent.mkdir(parents=True, exist_ok=True)
-     path.write_text(json.dumps(build_config(preset), indent=2), encoding="utf-8")
-     return path
++    def cancel(self) -> bool:
++        """Abort the turn in progress. True if one was running."""
++        if not self._busy.is_set():
++            return False
++        self._cancel.set()
++        return True
++
++    def _abandon(self, agent) -> None:
++        """Drop the agent whose turn was aborted; a fresh one serves the next turn.
++        The orphaned run can no longer touch the mailbox: _ACTIVE is cleared and
++        the approval callback refuses tools once cancelled."""
++        if self._agent is agent:
++            self._agent = None
++
++        def close() -> None:
++            try:
++                agent.close()
++            except Exception:
++                pass
++
++        threading.Thread(target=close, daemon=True).start()
++
+     def _with_history(self, text: str) -> str:
+         if not self._history:
+             return text
+--- a/mailkeep/web.py
++++ b/mailkeep/web.py
+@@ -255,11 +255,22 @@
+     print(f"OAuth redirect URI (register only for Web clients): {ui_redirect_uri(port)}")
+     if open_browser:
+         threading.Timer(0.4, open_window, args=(url,)).start()
++    runner = threading.Thread(target=server.serve_forever, name="mailkeep-http", daemon=True)
++    runner.start()
+     try:
+-        server.serve_forever()
+-    except KeyboardInterrupt:
+-        pass
++        while runner.is_alive():
++            try:
++                runner.join(0.5)
++            except KeyboardInterrupt:
++                # Ctrl+C while the agent is thinking stops that turn only;
++                # Ctrl+C while idle quits the app.
++                if app.agent is not None and app.agent.cancel():
++                    print("\n[mailkeep] Ctrl+C: stopped the agent; conversation aborted. "
++                          "Press Ctrl+C again (while idle) to quit.", flush=True)
++                    continue
++                break
+     finally:
++        server.shutdown()
+         server.server_close()
+         if app.agent:
+             app.agent.close()
+--- a/tests/test_env_key.py
++++ b/tests/test_env_key.py
+@@ -0,0 +1,40 @@
++"""The provider key must be found in .env, even with Windows file quirks."""
++import importlib
++
++import pytest
++
++from mailkeep import config, llm
 +
 +
-+def describe() -> list[str]:
-+    """Startup diagnostics. Never prints a key, only whether one was found."""
-+    files = [f"{p} ({'found' if p.is_file() else 'missing'})" for p in (ENV_FILE, FALLBACK_ENV_FILE)]
-+    lines = ["env files: " + "; ".join(files)]
-+    try:
-+        preset = selected()
-+    except ValueError as exc:
-+        return lines + [f"LLM config error: {exc}"]
-+    if preset is None:
-+        return lines + ["LLM: none (no MAILKEEP_LLM_PROVIDER and no provider API key found)"]
-+    key = _api_key(preset)
-+    lines.append(f"LLM provider: {preset.label}  model: {preset.model}  base_url: {preset.base_url}")
-+    lines.append(
-+        f"LLM api key: {'present (' + str(len(key)) + ' chars)' if key else 'MISSING'}"
-+        f"  (MAILKEEP_LLM_API_KEY or {preset.key_env})"
-+    )
-+    return lines
-diff -ruN -x .git -x __pycache__ -x .openminion base/mailkeep/static/index.html mk/mailkeep/static/index.html
---- a/mailkeep/static/index.html	2026-10-19 13:35:23.295776022 +0000
-+++ b/mailkeep/static/index.html	2026-10-19 13:36:15.942332203 +0000
-@@ -297,7 +297,7 @@
-   $("account").textContent = st.connected ? (st.demo ? "demo mailbox" : st.account) : "not connected";
-   $("account").className = "chip" + (st.connected ? " ok" : "");
-   $("mode").hidden = !st.mode;
--  $("mode").textContent = st.mode === "openminion" ? "OpenMinion agent" : "rule parser";
-+  $("mode").textContent = st.mode === "openminion" ? (st.mode_reason || "OpenMinion agent").replace(" via OpenMinion", "") : "rule parser (" + (st.mode_reason || "no model") + ")";
-   $("mode").title = st.mode_reason || "";
-   $("logout").hidden = !st.connected || st.demo;
-   $("clear").hidden = !st.connected;
-diff -ruN -x .git -x __pycache__ -x .openminion base/scripts/gmail.env.example mk/scripts/gmail.env.example
---- a/scripts/gmail.env.example	2026-10-19 13:35:23.888923626 +0000
-+++ b/scripts/gmail.env.example	2026-10-19 13:36:15.942400034 +0000
-@@ -17,11 +17,12 @@
- # For "web" clients register exactly: http://localhost:8765/oauth/callback
- 
- # --- AI agent (OpenMinion) ----------------------------------------------
--# MAILKEEP_LLM_PROVIDER=portal          # portal | gemini | openrouter
--# CORTENSOR_API_KEY=
--# GEMINI_API_KEY=
--# OPENROUTER_API_KEY=
--# MAILKEEP_LLM_MODEL=                   # optional override
-+# Pick provider, model and key here; Mailkeep generates the OpenMinion config.
-+MAILKEEP_LLM_PROVIDER=openrouter        # openrouter | gemini | portal | openai | custom
-+MAILKEEP_LLM_MODEL=openai/gpt-4.1-mini  # any model id the provider offers
-+MAILKEEP_LLM_API_KEY=                   # or OPENROUTER_API_KEY / GEMINI_API_KEY / CORTENSOR_API_KEY
-+# MAILKEEP_LLM_BASE_URL=                # only for "custom" or a proxy
-+# MAILKEEP_TRACE=0                      # hide the thinking process in the console
- 
- # --- Fix for "Error 403: access_denied" ---------------------------------
- # Google only lets Test users of the client's own Cloud project sign in.
++@pytest.fixture
++def envdir(tmp_path, monkeypatch):
++    for k in ("OPENROUTER_API_KEY", "MAILKEEP_LLM_PROVIDER", "MAILKEEP_LLM_API_KEY", "LLM_PROVIDER",
++              "LLM_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "CORTENSOR_API_KEY", "OPENAI_API_KEY"):
++        monkeypatch.delenv(k, raising=False)
++    dot = tmp_path / ".env"
++    monkeypatch.setattr(config, "ENV_FILE", tmp_path / "missing1")
++    monkeypatch.setattr(config, "FALLBACK_ENV_FILE", tmp_path / "missing2")
++    monkeypatch.setattr(config, "DOTENV_FILES", (dot,))
++    return dot
++
++
++def test_root_dotenv_key_is_used(envdir):
++    envdir.write_text("OPENROUTER_API_KEY=sk-or-abc\n", encoding="utf-8")
++    assert llm.selected().key == "openrouter"
++
++
++def test_bom_export_and_comment(envdir):
++    envdir.write_bytes("\ufeffexport OPENROUTER_API_KEY = sk-or-abc  # mine\n".encode("utf-8"))
++    assert config.setting("OPENROUTER_API_KEY") == "sk-or-abc"
++
++
++def test_utf16_file(envdir):
++    envdir.write_text("OPENROUTER_API_KEY=sk-or-abc\n", encoding="utf-16")
++    assert config.setting("OPENROUTER_API_KEY") == "sk-or-abc"
++
++
++def test_key_exported_for_openminion(envdir, monkeypatch):
++    envdir.write_text('OPENROUTER_API_KEY="sk-or-abc"\n', encoding="utf-8")
++    assert llm.export_key(llm.by_name("openrouter"))
++    import os
++    assert os.environ["OPENROUTER_API_KEY"] == "sk-or-abc"
+--- a/tests/test_cancel.py
++++ b/tests/test_cancel.py
+@@ -0,0 +1,27 @@
++"""Ctrl+C / cancel() stops a thinking turn and resets the conversation."""
++import threading, time
++
++from mailkeep import agent as agent_mod
++from mailkeep.demo import DemoGmailClient
++from mailkeep.session import Session
++
++
++def test_cancel_aborts_turn(monkeypatch):
++    openminion = __import__("pytest").importorskip("openminion")
++    a = agent_mod.MailkeepAgent(Session(DemoGmailClient()))
++    a.mode = "openminion"
++
++    class Slow:
++        def run_stream(self, *args, **kw):
++            time.sleep(5)
++        def close(self):
++            pass
++
++    a._agent = Slow()
++    a._history = [("old", "reply")]
++    threading.Timer(0.3, a.cancel).start()
++    started = time.monotonic()
++    out = a.chat("how are u")
++    assert time.monotonic() - started < 2
++    assert "Stopped" in out.responses[-1].text
++    assert a._history == [] and a._agent is None

@@ -15,6 +15,9 @@ ENV_FILE = ROOT / ".openminion" / "gmail.env"
 # Accepted as a fallback so `scripts/gmail.env` works too (the documented copy
 # target). The canonical location stays `.openminion/gmail.env`.
 FALLBACK_ENV_FILE = ROOT / "scripts" / "gmail.env"
+# Plain `.env` files are read too (project root first): many users keep their
+# provider key there, and before this it was silently ignored.
+DOTENV_FILES = (ROOT / ".env", ROOT / ".openminion" / ".env", ROOT / "scripts" / ".env")
 TOKEN_DIR = ROOT / ".openminion" / "gmail" / "credentials"
 TOKEN_FILE = TOKEN_DIR / "mailkeep-token.json"
 # Client JSON downloaded from Google Cloud Console. Its top-level key
@@ -85,30 +88,53 @@ class AuthRequired(RuntimeError):
 
 
 def load_env_file(path: Path = ENV_FILE) -> dict[str, str]:
-    """Read a simple KEY=VALUE file without touching the process environment."""
+    """Read a simple KEY=VALUE file without touching the process environment.
+
+    Tolerates what real-world Windows/.env files contain: a UTF-8 BOM (Notepad),
+    UTF-16, `export KEY=...`, spaces around `=`, quotes, and trailing
+    `# comments` on unquoted values.
+    """
     values: dict[str, str] = {}
     if not path.is_file():
         return values
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
+    raw = path.read_bytes()
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        text = raw.decode("utf-16")
+    else:
+        text = raw.decode("utf-8-sig", errors="replace")
+    for raw_line in text.splitlines():
+        line = raw_line.strip().lstrip("\ufeff")
         if not line or line.startswith("#") or "=" not in line:
             continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
         key, _, value = line.partition("=")
         key = key.strip()
+        value = value.strip()
+        if value[:1] in {'"', "'"} and value[1:].find(value[0]) != -1:
+            value = value[1 : 1 + value[1:].find(value[0])]
+        else:
+            value = value.split(" #", 1)[0].split("\t#", 1)[0].strip()
         if key:
-            values[key] = value.strip().strip('"').strip("'")
+            values[key] = value
     return values
 
 
+def env_files() -> tuple[Path, ...]:
+    """Every file `setting()` reads, in priority order."""
+    return (ENV_FILE, FALLBACK_ENV_FILE, *DOTENV_FILES)
+
+
 def setting(name: str) -> str:
-    """Process environment wins, then the project env files."""
+    """Process environment wins, then the project env files (see env_files())."""
     value = os.environ.get(name, "").strip()
     if value:
         return value
-    value = load_env_file().get(name, "").strip()
-    if value:
-        return value
-    return load_env_file(FALLBACK_ENV_FILE).get(name, "").strip()
+    for path in env_files():
+        value = load_env_file(path).get(name, "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _client_file_section() -> tuple[str, dict] | None:
