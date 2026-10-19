@@ -5,10 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mailkeep</title>
 <style>
+  /* Chat layout follows asdfg/property-agent-ui phase 2 (Conversation.tsx):
+     avatar rows, a thinking bubble, an "action required" card for approvals,
+     retries on 5xx, and a locked composer while a turn runs. No build step. */
   :root {
     --bg: #0f1115; --surface: #171a21; --raised: #1f232c; --border: #2a2f3a;
     --fg: #e7e9ee; --muted: #8b93a3; --primary: #e0a458; --primary-fg: #1a1206;
-    --ok: #5fbf8f; --danger: #e5675f; --radius: 14px;
+    --primary-soft: rgba(224,164,88,.12);
+    --ok: #5fbf8f; --danger: #e5675f; --danger-soft: rgba(229,103,95,.10); --radius: 14px;
     --font: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
   }
@@ -18,39 +22,56 @@
   header { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--border); }
   .logo { font-weight: 700; } .logo span { color: var(--primary); }
   .chip { font: 12px var(--mono); color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
-  .chip.ok { color: var(--ok); }
+  .chip.ok { color: var(--ok); border-color: rgba(95,191,143,.4); }
   .spacer { flex: 1; }
-  button { font: inherit; border-radius: 10px; border: 1px solid var(--border); background: var(--raised); color: var(--fg); padding: 8px 14px; cursor: pointer; }
+  button { font: inherit; border-radius: 10px; border: 1px solid var(--border); background: var(--raised); color: var(--fg); padding: 8px 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
   button:hover { border-color: var(--muted); }
   button.primary { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); font-weight: 600; }
   button.danger { color: var(--danger); }
   button:disabled { opacity: .5; cursor: not-allowed; }
-  main { overflow-y: auto; padding: 24px 20px; display: flex; flex-direction: column; gap: 14px; }
-  .msg { max-width: 88%; padding: 10px 14px; border-radius: var(--radius); white-space: pre-wrap; overflow-wrap: anywhere; }
-  .msg.user { align-self: flex-end; background: var(--primary); color: var(--primary-fg); border-bottom-right-radius: 4px; }
-  .msg.bot { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
-  .msg.error { border-color: var(--danger); color: var(--danger); }
+  svg.i { width: 16px; height: 16px; flex: none; }
+  main { overflow-y: auto; padding: 24px 20px; display: flex; flex-direction: column; gap: 16px; }
+  .turn { display: flex; gap: 10px; align-items: flex-end; max-width: 92%; animation: rise .18s ease-out; }
+  .turn.user { align-self: flex-end; flex-direction: row-reverse; }
+  .avatar { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; flex: none; background: var(--raised); border: 1px solid var(--border); color: var(--primary); }
+  .turn.user .avatar { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+  .msg { padding: 10px 14px; border-radius: var(--radius); white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+  .turn.user .msg { background: var(--primary); color: var(--primary-fg); border-bottom-right-radius: 4px; }
+  .turn.bot .msg { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .turn.bot .msg.error { border-color: var(--danger); background: var(--danger-soft); color: var(--danger); }
   .hint { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .tablewrap { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 13px; white-space: normal; }
   th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
   th { color: var(--muted); font-weight: 500; }
   td.id { font: 11px var(--mono); color: var(--muted); }
-  .card { background: var(--raised); border: 1px solid var(--primary); border-radius: var(--radius); padding: 14px; }
-  .card h3 { margin: 0 0 4px; font-size: 14px; color: var(--primary); }
-  .row { display: flex; gap: 8px; margin-top: 12px; }
-  .thinking { color: var(--muted); font-size: 13px; }
-  .thinking::after { content: " …"; animation: blink 1s infinite; }
-  @keyframes blink { 50% { opacity: .2; } }
+  .dots { display: inline-flex; gap: 4px; padding: 4px 0; }
+  .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: bounce 1.2s infinite; }
+  .dots i:nth-child(2) { animation-delay: .15s; } .dots i:nth-child(3) { animation-delay: .3s; }
+  .elapsed { font: 12px var(--mono); color: var(--muted); margin-left: 8px; }
+  @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .4; } 30% { transform: translateY(-4px); opacity: 1; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  .action { align-self: stretch; background: var(--primary-soft); border: 1px solid var(--primary); border-radius: var(--radius); padding: 14px 16px; }
+  .action h3 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--primary); display: flex; align-items: center; gap: 6px; }
+  .action .q { white-space: pre-wrap; }
+  .action.done { opacity: .6; border-style: dashed; }
+  .row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
   footer { padding: 12px 20px 20px; border-top: 1px solid var(--border); }
-  form { display: flex; gap: 10px; }
-  textarea { flex: 1; resize: none; height: 46px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); font: inherit; }
+  form { display: flex; gap: 10px; align-items: flex-end; }
+  textarea { flex: 1; resize: none; min-height: 46px; max-height: 160px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); font: inherit; }
   textarea:focus { outline: none; border-color: var(--primary); }
+  textarea:disabled { opacity: .6; }
   .suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
   .suggest button { font-size: 12px; padding: 4px 10px; border-radius: 999px; color: var(--muted); }
-  .setup { margin: auto; max-width: 580px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+  .lock { font-size: 12px; color: var(--muted); margin-top: 6px; display: flex; align-items: center; gap: 6px; }
+  .setup { margin: auto; max-width: 620px; width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
   .setup h2 { margin-top: 0; }
   .setup textarea { width: 100%; height: 120px; margin: 8px 0; font: 12px var(--mono); }
+  .autherr { border: 1px solid var(--danger); background: var(--danger-soft); border-radius: 12px; padding: 12px 14px; margin: 12px 0; }
+  .autherr b { color: var(--danger); }
+  .autherr ol { margin: 8px 0 0; padding-left: 20px; }
   code { font-family: var(--mono); background: var(--raised); padding: 2px 6px; border-radius: 6px; font-size: 13px; }
+  a { color: var(--primary); }
   .muted { color: var(--muted); font-size: 13px; }
 </style>
 </head>
@@ -61,22 +82,39 @@
     <div id="account" class="chip">not connected</div>
     <div id="mode" class="chip" hidden></div>
     <div class="spacer"></div>
+    <button id="clear" hidden>Clear</button>
     <button id="logout" class="danger" hidden>Disconnect</button>
   </header>
-  <main id="log"></main>
+  <main id="log" aria-live="polite"></main>
   <footer id="composer" hidden>
     <div class="suggest" id="suggest"></div>
     <form id="form">
-      <textarea id="input" placeholder="Ask about your mail, e.g. find invoices from last month"></textarea>
-      <button class="primary" id="send" type="submit">Send</button>
+      <textarea id="input" rows="1" placeholder="Ask about your mail, e.g. triage my unread mail"></textarea>
+      <button class="primary" id="send" type="submit" aria-label="Send"></button>
     </form>
+    <div class="lock" id="lock" hidden></div>
   </footer>
 </div>
 <script>
 const TOKEN = "__TOKEN__";
 const $ = (id) => document.getElementById(id);
 const log = $("log");
-let busy = false;
+let busy = false, pendingApproval = false, lastStatus = {};
+
+const ICONS = {
+  bot: '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+  lock: '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+};
+function icon(name) {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round" })) s.setAttribute(k, v);
+  s.classList.add("i"); s.innerHTML = ICONS[name]; return s;   // static markup only, never mail content
+}
+$("send").append(icon("send"));
 
 async function api(path, body) {
   const res = await fetch(path, {
@@ -85,7 +123,7 @@ async function api(path, body) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({ error: "Bad response from Mailkeep" }));
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) { const e = new Error(data.error || res.statusText); e.status = res.status; throw e; }
   return data;
 }
 function el(tag, cls, text) {
@@ -96,12 +134,17 @@ function el(tag, cls, text) {
 }
 const scroll = () => { log.scrollTop = log.scrollHeight; };
 
-function addUser(text) { log.append(el("div", "msg user", text)); scroll(); }
+function turn(who, body) {
+  const t = el("div", "turn " + who), a = el("div", "avatar");
+  a.append(icon(who === "user" ? "user" : "bot"));
+  t.append(a, body); log.append(t); scroll(); return t;
+}
+function addUser(text) { turn("user", el("div", "msg", text)); }
 function addBot(m, isError) {
-  const box = el("div", "msg bot" + (isError ? " error" : ""));
+  const box = el("div", "msg" + (isError ? " error" : ""));
   if (m.text) box.append(document.createTextNode(m.text));
   if (m.table) {
-    const t = el("table"), head = el("tr");
+    const wrap = el("div", "tablewrap"), t = el("table"), head = el("tr");
     m.table.columns.forEach((c) => head.append(el("th", "", c)));
     t.append(head);
     m.table.rows.forEach((r) => {
@@ -109,97 +152,133 @@ function addBot(m, isError) {
       r.forEach((v, i) => tr.append(el("td", m.table.columns[i] === "ID" ? "id" : "", v)));
       t.append(tr);
     });
-    box.append(t);
+    wrap.append(t); box.append(wrap);
   }
   if (m.hint) box.append(el("div", "hint", m.hint.replace(/Answer y[^.]*\./, "Use the buttons below.")));
-  log.append(box); scroll();
+  turn("bot", box);
+}
+function thinking() {
+  const box = el("div", "msg"), dots = el("span", "dots"), sec = el("span", "elapsed", "");
+  dots.append(el("i"), el("i"), el("i")); box.append(dots, sec);
+  const t = turn("bot", box), start = Date.now();
+  const tick = setInterval(() => { const s = Math.round((Date.now() - start) / 1000); if (s >= 3) sec.textContent = s + "s"; }, 1000);
+  return { set: (txt) => { sec.textContent = txt; }, done: () => { clearInterval(tick); t.remove(); } };
 }
 function addApproval(a) {
-  const card = el("div", "card");
-  card.append(el("h3", "", "Needs your approval"), el("div", "", a.question),
-              el("div", "muted", "Nothing has changed in Gmail yet. Mailkeep never sends mail."));
-  const row = el("div", "row"), yes = el("button", "primary", "Approve"), no = el("button", "", "Cancel");
+  pendingApproval = true; lockComposer();
+  const card = el("div", "action"), h = el("h3");
+  h.append(icon("lock"), document.createTextNode("Action required"));
+  card.append(h, el("div", "q", a.question), el("div", "muted", "Nothing has changed in Gmail yet. Mailkeep never sends mail."));
+  const row = el("div", "row"), yes = el("button", "primary"), no = el("button");
+  yes.append(icon("check"), document.createTextNode("Approve"));
+  no.append(icon("x"), document.createTextNode("Cancel"));
   const done = async (approve) => {
-    yes.disabled = no.disabled = true;
+    yes.disabled = no.disabled = true; pendingApproval = false;
+    card.classList.add("done"); row.replaceWith(el("div", "muted", approve ? "Approved." : "Cancelled."));
     await run(() => api("/api/approve", { id: a.id, approve }));
-    card.remove();
   };
   yes.onclick = () => done(true); no.onclick = () => done(false);
   row.append(yes, no); card.append(row); log.append(card); scroll();
 }
-async function run(call) {
-  busy = true; $("send").disabled = true;
-  const thinking = el("div", "thinking", "Working"); log.append(thinking); scroll();
-  try {
-    const out = await call();
-    thinking.remove();
-    out.messages.forEach((m) => addBot(m));
-    if (out.approval) addApproval(out.approval);
-  } catch (e) { thinking.remove(); addBot({ text: e.message }, true); }
-  busy = false; $("send").disabled = false; $("input").focus();
+function lockComposer() {
+  const locked = busy || pendingApproval;
+  $("send").disabled = locked; $("input").disabled = locked;
+  document.querySelectorAll("#suggest button").forEach((b) => (b.disabled = locked));
+  const lock = $("lock"); lock.innerHTML = ""; lock.hidden = !locked;
+  if (locked) lock.append(icon("lock"), document.createTextNode(pendingApproval ? "Approve or cancel the request above to continue." : "Mailkeep is working…"));
+  else $("input").focus();
 }
+async function run(call) {
+  busy = true; lockComposer();
+  const t = thinking(), maxRetries = 3;   // retry 5xx with backoff like phase-2 chat, never 4xx
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const out = await call();
+        t.done(); out.messages.forEach((m) => addBot(m));
+        if (out.approval) addApproval(out.approval);
+        break;
+      } catch (e) {
+        if (e.status >= 500 && attempt < maxRetries) {
+          t.set("retrying " + (attempt + 1) + "/" + maxRetries);
+          await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+          continue;
+        }
+        t.done(); addBot({ text: e.message }, true);
+        if (e.status === 409) refresh();
+        break;
+      }
+    }
+  } finally { busy = false; lockComposer(); }
+}
+function autosize() { const i = $("input"); i.style.height = "auto"; i.style.height = Math.min(i.scrollHeight, 160) + "px"; }
+$("input").oninput = autosize;
 $("form").onsubmit = (e) => {
   e.preventDefault();
   const text = $("input").value.trim();
-  if (!text || busy) return;
-  $("input").value = ""; addUser(text);
+  if (!text || busy || pendingApproval) return;
+  $("input").value = ""; autosize(); addUser(text);
   run(() => api("/api/chat", { text }));
 };
-$("input").onkeydown = (e) => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); }
-};
+$("input").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); } };
 ["find unread emails", "find invoices from last month", "analyze trash", "labels", "help"].forEach((s) => {
   const b = el("button", "", s); b.type = "button";
-  b.onclick = () => { if (!busy) { $("input").value = s; $("form").requestSubmit(); } };
+  b.onclick = () => { if (!busy && !pendingApproval) { $("input").value = s; $("form").requestSubmit(); } };
   $("suggest").append(b);
 });
+$("clear").onclick = () => { if (!busy && !pendingApproval) { log.innerHTML = ""; greet(lastStatus); } };
 $("logout").onclick = async () => {
   if (!confirm("Disconnect Gmail and delete the local token?")) return;
   await api("/api/logout", {}); log.innerHTML = ""; refresh();
 };
 
-function setupScreen(st) {
+async function authErrorBox(message) {
+  const box = el("div", "autherr");
+  box.append(el("b", "", "Google refused the sign-in. "), document.createTextNode(message));
+  try {
+    const info = await api("/api/oauth-check", {});
+    const p = el("p", "muted"), a = el("a", "", "Open its Audience page");
+    a.href = info.audience_url; a.target = "_blank"; a.rel = "noopener";
+    p.append(document.createTextNode("Your OAuth client belongs to Cloud project number "), el("code", "", info.project_number), document.createTextNode(". "), a);
+    const ol = el("ol"); info.steps.forEach((s) => ol.append(el("li", "", s)));
+    box.append(p, ol);
+    if (!info.login_hint) box.append(el("p", "muted", "Tip: set MAILKEEP_GMAIL_ACCOUNT=you@gmail.com in .openminion/gmail.env so Google pre-selects the test-user account."));
+  } catch (e) { /* checklist is best effort */ }
+  return box;
+}
+async function setupScreen(st) {
   log.innerHTML = "";
-  const box = el("div", "setup");
+  const box = el("div", "setup"), err = el("p", "muted");
   box.append(el("h2", "", "Connect your Gmail"));
-  const err = el("p", "muted");
   if (!st.client_configured) {
     box.append(el("p", "", "Step 1. In Google Cloud Console enable the Gmail API, then Credentials → Create credentials → OAuth client ID → Desktop app → Download JSON. Paste the file contents here. It is stored only on this computer."));
     const ta = el("textarea"); ta.placeholder = '{"installed": {"client_id": "...", "client_secret": "..."}}';
     const save = el("button", "primary", "Save client");
-    save.onclick = async () => {
-      try { await api("/api/client", { json: ta.value }); refresh(); } catch (e) { err.textContent = e.message; }
-    };
+    save.onclick = async () => { try { await api("/api/client", { json: ta.value }); refresh(); } catch (e) { err.textContent = e.message; } };
     box.append(ta, save, err);
   } else {
     box.append(el("p", "", "Step 2. Google will ask you to allow Mailkeep to read, label and trash mail and to create drafts. It cannot send mail. Your token stays on this computer."));
     if (st.client_type === "unknown") {
-      // Only ID + secret are known (gmail.env). Guessing "Desktop" here is what
-      // produced Google's "Error 400: redirect_uri_mismatch" for Web clients.
       box.append(el("p", "", "Which kind of OAuth client did you create? Google Cloud Console → Credentials shows it in the 'Type' column."));
       const pick = el("div", "row");
       for (const [type, label] of [["desktop", "Desktop app"], ["web", "Web application"]]) {
         const b = el("button", type === "desktop" ? "primary" : "", label);
-        b.onclick = async () => {
-          try { await api("/api/client-type", { type }); refresh(); } catch (e) { err.textContent = e.message; }
-        };
+        b.onclick = async () => { try { await api("/api/client-type", { type }); refresh(); } catch (e) { err.textContent = e.message; } };
         pick.append(b);
       }
-      box.append(pick, err);
-      log.append(box);
-      return;
+      box.append(pick, err); log.append(box); return;
     }
     if (st.client_type === "web") {
-      const p = el("p", "muted", "Your client is a Web application. Before signing in, add this exact line under Authorized redirect URIs and press Save (Google can take a few minutes to apply it): ");
+      const p = el("p", "muted", "Your client is a Web application. Before signing in, add this exact line under Authorized redirect URIs and press Save: ");
       const copy = el("button", "", "Copy");
       copy.onclick = () => navigator.clipboard && navigator.clipboard.writeText(st.redirect_uri);
       p.append(el("code", "", st.redirect_uri), " ", copy); box.append(p);
-      box.append(el("p", "muted", "localhost and 127.0.0.1 are different to Google, and so is a trailing slash."));
     }
-    box.append(el("p", "muted", "If Google says 'Access blocked', add your Gmail address under Google Auth Platform → Audience → Test users."));
-    const go = el("button", "primary", "Sign in with Google");
+    if (st.auth_error) box.append(await authErrorBox(st.auth_error));
+    else box.append(el("p", "muted", "Before signing in: your Gmail address must be listed under Google Auth Platform → Audience → Test users, otherwise Google answers 'Error 403: access_denied'."));
+    const go = el("button", "primary", st.auth_error ? "Try again" : "Sign in with Google");
     go.onclick = async () => {
-      const popup = window.open("", "mailkeep-oauth", "width=520,height=680");
+      const popup = window.open("", "mailkeep-oauth", "width=520,height=720");
       try { const { url } = await api("/api/login", {}); if (popup) popup.location.href = url; else location.href = url; }
       catch (e) { if (popup) popup.close(); err.textContent = e.message; }
     };
@@ -207,23 +286,25 @@ function setupScreen(st) {
   }
   log.append(box);
 }
+function greet(st) {
+  addBot({ text: "Hi, I'm Mailkeep. I can find mail, label it, audit Trash and write drafts. Almost everything for making email management easier! Every change waits for your approval, and I never send mail.",
+           hint: st.mode === "rules" ? "No model configured (" + st.mode_reason + "), so I use the built-in command parser. Type help." : "" });
+}
 async function refresh() {
   let st;
   try { st = await api("/api/status"); } catch (e) { log.textContent = e.message; return; }
+  lastStatus = st;
   $("account").textContent = st.connected ? (st.demo ? "demo mailbox" : st.account) : "not connected";
   $("account").className = "chip" + (st.connected ? " ok" : "");
   $("mode").hidden = !st.mode;
-  $("mode").textContent = st.mode === "openminion" ? "OpenMinion agent" : "rule parser";
+  $("mode").textContent = st.mode === "openminion" ? (st.mode_reason || "OpenMinion agent").replace(" via OpenMinion", "") : "rule parser (" + (st.mode_reason || "no model") + ")";
   $("mode").title = st.mode_reason || "";
   $("logout").hidden = !st.connected || st.demo;
+  $("clear").hidden = !st.connected;
   $("composer").hidden = !st.connected;
   if (!st.connected) return setupScreen(st);
-  if (!log.querySelector(".msg")) {
-    log.innerHTML = "";
-    addBot({ text: "Hi, I'm Mailkeep. I can find mail, label it, audit Trash and write drafts. Every change waits for your approval, and I never send mail.",
-             hint: st.mode === "rules" ? "No model configured (" + st.mode_reason + "), so I use the built-in command parser. Type help." : "" });
-  }
-  $("input").focus();
+  if (!log.querySelector(".turn")) { log.innerHTML = ""; greet(st); }
+  lockComposer();
 }
 window.addEventListener("message", (e) => { if (e.origin === location.origin && e.data === "mailkeep-auth") refresh(); });
 window.addEventListener("focus", () => { if ($("composer").hidden) refresh(); });

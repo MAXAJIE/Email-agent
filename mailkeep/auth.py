@@ -93,16 +93,80 @@ def missing_scopes(granted) -> list[str]:
 
 
 # Google `error=` values on the callback -> what to do about them.
+#
+# `Error 403: access_denied` with flowName=GeneralOAuthFlow is NOT a code bug:
+# Google refused before Mailkeep ever saw a code. With gmail.modify/compose
+# (restricted scopes) on an unverified app, Google only lets through accounts
+# listed as Test users of the SAME Cloud project the client ID belongs to.
+# Picking another account in a multi-account browser, or adding the test user
+# in a different project, produces exactly this error.
 CONSENT_ERRORS = {
     "access_denied": (
-        "Google blocked the sign-in or it was declined. If Google said 'Access "
-        "blocked: ... has not completed the Google verification process', open "
-        "Google Cloud Console -> Google Auth Platform -> Audience and add your Gmail "
-        "address under Test users (or publish the app), then sign in again and tick "
-        "every Gmail checkbox."
+        "Google returned Error 403: access_denied - it blocked the sign-in before "
+        "Mailkeep got anything (or you pressed Cancel). Fix, in this order: "
+        "(1) Google Cloud Console -> Google Auth Platform -> Audience, in the SAME "
+        "project as your OAuth client (project number {project}): user type "
+        "External, Publishing status Testing, and add the exact Gmail address you "
+        "sign in with under Test users -> Save. (2) On Google's page choose that "
+        "same account (set MAILKEEP_GMAIL_ACCOUNT so Mailkeep pre-selects it). "
+        "(3) Google Auth Platform -> Data access: add gmail.modify and "
+        "gmail.compose. (4) Workspace (company/school) accounts: the admin must "
+        "allow the app. Then sign in again and tick every Gmail checkbox."
     ),
     "admin_policy_enforced": "Your Google Workspace admin blocks this app.",
+    "org_internal": (
+        "The OAuth app's Audience is 'Internal', so only accounts of that Workspace "
+        "organisation can sign in. Switch to External + Testing and add yourself "
+        "as a test user."
+    ),
 }
+
+
+def client_project_number() -> str:
+    """Cloud project number = digits before '-' in the client ID (not secret)."""
+    try:
+        client_id = next(iter(client_config().values()))["client_id"]
+    except Exception:
+        return "unknown"
+    head = str(client_id).split("-", 1)[0]
+    return head if head.isdigit() else "unknown"
+
+
+def consent_error_message(error: str, description: str = "") -> str:
+    template = CONSENT_ERRORS.get(error)
+    if template is None:
+        text = f"Google did not grant access ({error}). Nothing was connected."
+    else:
+        text = template.format(project=client_project_number())
+    if description:
+        text += f" Google said: {description}"
+    return text
+
+
+def login_hint() -> str:
+    return setting("MAILKEEP_GMAIL_ACCOUNT").strip()
+
+
+def oauth_checklist() -> dict[str, object]:
+    """Everything needed to diagnose a Google refusal, without any secret."""
+    project = client_project_number()
+    url = "https://console.cloud.google.com/auth/audience"
+    if project != "unknown":
+        url += f"?project={project}"
+    return {
+        "project_number": project,
+        "client_type": client_type() if has_client_credentials() else "",
+        "login_hint": login_hint(),
+        "scopes": list(SCOPES),
+        "audience_url": url,
+        "steps": [
+            "Audience: user type 'External', Publishing status 'Testing'.",
+            "Audience -> Test users: add the exact Gmail address you will pick.",
+            "Data access: add gmail.modify and gmail.compose (and readonly/labels).",
+            "APIs & Services -> Library: Gmail API is Enabled in this project.",
+            "On Google's page pick that same account and tick every Gmail box.",
+        ],
+    }
 
 
 def check_redirect(uri: str) -> None:
@@ -185,11 +249,18 @@ def load_credentials(interactive: bool = True, open_browser: bool = True):
             open_browser=open_browser,
             authorization_prompt_message="Open this URL to authorize Mailkeep:\n{url}\n",
             success_message="Mailkeep is authorized. You can close this tab.",
+            prompt="select_account consent",
+            **({"login_hint": login_hint()} if login_hint() else {}),
         )
     except OSError as exc:
         raise AuthRequired(
             f"Could not bind OAuth callback port {port} ({exc}). Set MAILKEEP_OAUTH_PORT."
         ) from exc
+    except Exception as exc:
+        # oauthlib turns ?error=access_denied into an opaque exception.
+        if "access_denied" in str(exc) or "AccessDenied" in type(exc).__name__:
+            raise AuthRequired(consent_error_message("access_denied")) from exc
+        raise
     save_credentials(credentials)
     print(f"Token saved to {TOKEN_FILE}")
     return credentials
@@ -213,8 +284,15 @@ class WebLogin:
             client_config(self.redirect), scopes=list(SCOPES), redirect_uri=self.redirect
         )
         state = secrets.token_urlsafe(24)
+        extra = {"login_hint": login_hint()} if login_hint() else {}
+        # select_account forces the chooser, so a multi-account browser cannot
+        # silently pick a non-test-user account (usual cause of 403 access_denied).
         url, _ = flow.authorization_url(
-            access_type="offline", prompt="consent", include_granted_scopes="true", state=state
+            access_type="offline",
+            prompt="select_account consent",
+            include_granted_scopes="true",
+            state=state,
+            **extra,
         )
         with self._lock:
             now = time.monotonic()

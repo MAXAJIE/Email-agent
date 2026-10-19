@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -55,6 +57,34 @@ Rules:
 # this lock makes that explicit so the global is safe.
 _LEAK_MARKERS = ("[CONSTRAINTS & POLICY]", "[BUDGET TELEMETRY]", "budget_envelope_status")
 _TURN_LOCK = threading.Lock()
+
+
+def trace_enabled() -> bool:
+    return setting("MAILKEEP_TRACE").strip().lower() not in {"0", "off", "false", "no"}
+
+
+def trace(kind: str, text: object) -> None:
+    """Print the agent's thinking process to the console (MAILKEEP_TRACE=0 hides it)."""
+    if not trace_enabled():
+        return
+    body = str(text).strip().replace("\r", "")
+    if len(body) > 1200:
+        body = body[:1200] + " ..."
+    pad = "\n" + " " * 21
+    print(f"[mailkeep] {kind:<9}  " + pad.join(body.splitlines() or [""]), file=sys.stderr, flush=True)
+
+
+def _event_text(event: object) -> tuple[str, str]:
+    """Best-effort (kind, text) for an OpenMinion progress event (shape is undocumented)."""
+    data = event
+    if not isinstance(data, dict):
+        data = getattr(event, "__dict__", None) or {"text": event}
+    kind = str(data.get("type") or data.get("kind") or data.get("event") or "think")
+    for field in ("reasoning", "thinking", "delta", "text", "content", "message", "status"):
+        value = data.get(field)
+        if value:
+            return kind, value if isinstance(value, str) else json.dumps(value, default=str)
+    return kind, json.dumps(data, default=str)[:400]
 _ACTIVE: dict[str, object] = {"session": None, "outcomes": None}
 
 
@@ -74,9 +104,11 @@ def _build_tool():
             return "STOP: too many commands this turn. Answer the user now."
         if session.approval is not None:
             return "AWAITING_APPROVAL: a previous write is still waiting for the user."
+        trace("tool call", f"mailkeep_command({command!r})")
         try:
             outcome = session.run_command(command)
         except Exception as exc:  # user-facing errors become tool text
+            trace("tool err", exc)
             return f"ERROR: {exc}"
         outcomes.append(outcome)
         lines = []
@@ -88,7 +120,9 @@ def _build_tool():
                 lines += [" | ".join(row) for row in response.table.rows[:25]]
         if outcome.approval:
             lines.append(f"AWAITING_APPROVAL: {outcome.approval.question}")
-        return "\n".join(lines) or "(no output)"
+        result = "\n".join(lines) or "(no output)"
+        trace("tool out", result)
+        return result
 
     return mailkeep_command
 
@@ -125,8 +159,8 @@ def resolve_mode() -> tuple[str, str]:
         return "rules", "MAILKEEP_AGENT=rules"
     try:
         import openminion  # noqa: F401
-    except Exception:
-        return "rules", "openminion is not installed"
+    except Exception as exc:
+        return "rules", f"openminion cannot be imported ({type(exc).__name__}: {exc}); run pip install -r requirements.txt"
     from . import llm
 
     try:
@@ -135,9 +169,8 @@ def resolve_mode() -> tuple[str, str]:
         return "rules", str(exc)
     if preset is not None:
         if not llm.export_key(preset):
-            return "rules", f"{preset.label} selected but {preset.key_env} is not set"
-        model = setting("MAILKEEP_LLM_MODEL") or preset.model
-        return "openminion", f"{preset.label} ({model}) via OpenMinion"
+            return "rules", f"{preset.label} selected but no API key (MAILKEEP_LLM_API_KEY or {preset.key_env})"
+        return "openminion", f"{preset.label} ({preset.model}) via OpenMinion"
     provider = configured_provider()
     if not provider:
         return "rules", f"no OpenMinion config at {config_path()}"
@@ -155,6 +188,11 @@ class MailkeepAgent:
         # persist on disk across restarts (OM-01).
         self.session_id = session_id or f"mailkeep-{uuid.uuid4().hex[:12]}"
         self.mode, self.reason = resolve_mode()
+        from . import llm
+
+        for line in llm.describe():
+            print(f"[mailkeep] {line}", file=sys.stderr, flush=True)
+        print(f"[mailkeep] chat mode: {self.mode} - {self.reason}", file=sys.stderr, flush=True)
         self._agent = None
         self._turn = 0
         self._history: list[tuple[str, str]] = []
@@ -195,14 +233,26 @@ class MailkeepAgent:
                 # session_id. Use a fresh session per turn and carry a short
                 # transcript ourselves; numbered refs live in Session anyway.
                 self._turn += 1
-                result = self._ensure_agent().run(
+                started = time.monotonic()
+                trace("user", text)
+
+                def on_delta(event: object) -> None:
+                    try:
+                        kind, body = _event_text(event)
+                        trace(kind[:9], body)
+                    except Exception:  # tracing must never break a turn
+                        pass
+
+                result = self._ensure_agent().run_stream(
                     self._with_history(text),
+                    on_delta=on_delta,
                     session_id=f"{self.session_id}-{self._turn}",
                     timeout_seconds=float(setting("MAILKEEP_AGENT_TIMEOUT") or 180),
                     # Only our own tool may run; it gates writes itself.
                     approval_callback=lambda name, _args, _id: name == "mailkeep_command",
                 )
                 reply = result.text.strip()
+                trace("reply", f"{reply}\n({time.monotonic() - started:.1f}s, stats={result.stats})")
                 # The runtime prefixes replies with the agent profile name.
                 if reply.lower().startswith("openminion:"):
                     reply = reply.split(":", 1)[1].strip()
@@ -216,6 +266,7 @@ class MailkeepAgent:
             except (ProviderError, TurnTimeoutError) as exc:
                 why = (f"Model provider failed ({exc.code}): {exc.message}"
                        if isinstance(exc, ProviderError) else f"Agent turn timed out ({exc})")
+                trace("error", why)
                 outcomes.append(Outcome([Response(
                     f"{why}. Answered with the rule-based parser instead."
                 )]))

@@ -1,584 +1,364 @@
-diff --git a/mailkeep/agent.py b/mailkeep/agent.py
---- a/mailkeep/agent.py
-+++ b/mailkeep/agent.py
-@@ -94,6 +94,17 @@
+diff -ruN -x .git -x __pycache__ -x .openminion base/mailkeep/agent.py mk/mailkeep/agent.py
+--- a/mailkeep/agent.py	2026-10-19 13:35:21.139166056 +0000
++++ b/mailkeep/agent.py	2026-10-19 13:36:15.942078635 +0000
+@@ -13,7 +13,9 @@
  
+ import json
+ import os
++import sys
+ import threading
++import time
+ import uuid
+ from pathlib import Path
  
- def config_path() -> Path:
-+    """MAILKEEP_LLM_PROVIDER (portal/gemini/openrouter) wins: it generates a
-+    known-good OpenMinion config. Otherwise use the user's own file."""
-+    from . import llm
+@@ -55,6 +57,34 @@
+ # this lock makes that explicit so the global is safe.
+ _LEAK_MARKERS = ("[CONSTRAINTS & POLICY]", "[BUDGET TELEMETRY]", "budget_envelope_status")
+ _TURN_LOCK = threading.Lock()
 +
-+    try:
-+        preset = llm.selected()
-+    except ValueError:
-+        preset = None
-+    if preset is not None:
-+        llm.export_key(preset)
-+        return llm.write_config(preset)
-     return Path(setting("MAILKEEP_OPENMINION_CONFIG") or OPENMINION_DIR / "agents.json")
++
++def trace_enabled() -> bool:
++    return setting("MAILKEEP_TRACE").strip().lower() not in {"0", "off", "false", "no"}
++
++
++def trace(kind: str, text: object) -> None:
++    """Print the agent's thinking process to the console (MAILKEEP_TRACE=0 hides it)."""
++    if not trace_enabled():
++        return
++    body = str(text).strip().replace("\r", "")
++    if len(body) > 1200:
++        body = body[:1200] + " ..."
++    pad = "\n" + " " * 21
++    print(f"[mailkeep] {kind:<9}  " + pad.join(body.splitlines() or [""]), file=sys.stderr, flush=True)
++
++
++def _event_text(event: object) -> tuple[str, str]:
++    """Best-effort (kind, text) for an OpenMinion progress event (shape is undocumented)."""
++    data = event
++    if not isinstance(data, dict):
++        data = getattr(event, "__dict__", None) or {"text": event}
++    kind = str(data.get("type") or data.get("kind") or data.get("event") or "think")
++    for field in ("reasoning", "thinking", "delta", "text", "content", "message", "status"):
++        value = data.get(field)
++        if value:
++            return kind, value if isinstance(value, str) else json.dumps(value, default=str)
++    return kind, json.dumps(data, default=str)[:400]
+ _ACTIVE: dict[str, object] = {"session": None, "outcomes": None}
  
  
-@@ -116,6 +127,17 @@
+@@ -74,9 +104,11 @@
+             return "STOP: too many commands this turn. Answer the user now."
+         if session.approval is not None:
+             return "AWAITING_APPROVAL: a previous write is still waiting for the user."
++        trace("tool call", f"mailkeep_command({command!r})")
+         try:
+             outcome = session.run_command(command)
+         except Exception as exc:  # user-facing errors become tool text
++            trace("tool err", exc)
+             return f"ERROR: {exc}"
+         outcomes.append(outcome)
+         lines = []
+@@ -88,7 +120,9 @@
+                 lines += [" | ".join(row) for row in response.table.rows[:25]]
+         if outcome.approval:
+             lines.append(f"AWAITING_APPROVAL: {outcome.approval.question}")
+-        return "\n".join(lines) or "(no output)"
++        result = "\n".join(lines) or "(no output)"
++        trace("tool out", result)
++        return result
+ 
+     return mailkeep_command
+ 
+@@ -125,8 +159,8 @@
+         return "rules", "MAILKEEP_AGENT=rules"
+     try:
          import openminion  # noqa: F401
-     except Exception:
-         return "rules", "openminion is not installed"
-+    from . import llm
-+
-+    try:
-+        preset = llm.selected()
-+    except ValueError as exc:
-+        return "rules", str(exc)
-+    if preset is not None:
-+        if not llm.export_key(preset):
-+            return "rules", f"{preset.label} selected but {preset.key_env} is not set"
-+        model = setting("MAILKEEP_LLM_MODEL") or preset.model
-+        return "openminion", f"{preset.label} ({model}) via OpenMinion"
+-    except Exception:
+-        return "rules", "openminion is not installed"
++    except Exception as exc:
++        return "rules", f"openminion cannot be imported ({type(exc).__name__}: {exc}); run pip install -r requirements.txt"
+     from . import llm
+ 
+     try:
+@@ -135,9 +169,8 @@
+         return "rules", str(exc)
+     if preset is not None:
+         if not llm.export_key(preset):
+-            return "rules", f"{preset.label} selected but {preset.key_env} is not set"
+-        model = setting("MAILKEEP_LLM_MODEL") or preset.model
+-        return "openminion", f"{preset.label} ({model}) via OpenMinion"
++            return "rules", f"{preset.label} selected but no API key (MAILKEEP_LLM_API_KEY or {preset.key_env})"
++        return "openminion", f"{preset.label} ({preset.model}) via OpenMinion"
      provider = configured_provider()
      if not provider:
          return "rules", f"no OpenMinion config at {config_path()}"
-diff --git a/mailkeep/auth.py b/mailkeep/auth.py
---- a/mailkeep/auth.py
-+++ b/mailkeep/auth.py
-@@ -23,6 +23,7 @@
+@@ -155,6 +188,11 @@
+         # persist on disk across restarts (OM-01).
+         self.session_id = session_id or f"mailkeep-{uuid.uuid4().hex[:12]}"
+         self.mode, self.reason = resolve_mode()
++        from . import llm
++
++        for line in llm.describe():
++            print(f"[mailkeep] {line}", file=sys.stderr, flush=True)
++        print(f"[mailkeep] chat mode: {self.mode} - {self.reason}", file=sys.stderr, flush=True)
+         self._agent = None
+         self._turn = 0
+         self._history: list[tuple[str, str]] = []
+@@ -195,14 +233,26 @@
+                 # session_id. Use a fresh session per turn and carry a short
+                 # transcript ourselves; numbered refs live in Session anyway.
+                 self._turn += 1
+-                result = self._ensure_agent().run(
++                started = time.monotonic()
++                trace("user", text)
++
++                def on_delta(event: object) -> None:
++                    try:
++                        kind, body = _event_text(event)
++                        trace(kind[:9], body)
++                    except Exception:  # tracing must never break a turn
++                        pass
++
++                result = self._ensure_agent().run_stream(
+                     self._with_history(text),
++                    on_delta=on_delta,
+                     session_id=f"{self.session_id}-{self._turn}",
+                     timeout_seconds=float(setting("MAILKEEP_AGENT_TIMEOUT") or 180),
+                     # Only our own tool may run; it gates writes itself.
+                     approval_callback=lambda name, _args, _id: name == "mailkeep_command",
+                 )
+                 reply = result.text.strip()
++                trace("reply", f"{reply}\n({time.monotonic() - started:.1f}s, stats={result.stats})")
+                 # The runtime prefixes replies with the agent profile name.
+                 if reply.lower().startswith("openminion:"):
+                     reply = reply.split(":", 1)[1].strip()
+@@ -216,6 +266,7 @@
+             except (ProviderError, TurnTimeoutError) as exc:
+                 why = (f"Model provider failed ({exc.code}): {exc.message}"
+                        if isinstance(exc, ProviderError) else f"Agent turn timed out ({exc})")
++                trace("error", why)
+                 outcomes.append(Outcome([Response(
+                     f"{why}. Answered with the rule-based parser instead."
+                 )]))
+diff -ruN -x .git -x __pycache__ -x .openminion base/mailkeep/llm.py mk/mailkeep/llm.py
+--- a/mailkeep/llm.py	2026-10-19 13:35:22.442836204 +0000
++++ b/mailkeep/llm.py	2026-10-19 13:35:58.072661959 +0000
+@@ -1,15 +1,18 @@
+-"""Model provider presets for the OpenMinion agent (Portal, Gemini, OpenRouter).
++"""Model provider settings for the OpenMinion agent.
+ 
+-Set in `.openminion/gmail.env`:
++Everything is configured in `.openminion/gmail.env`; nothing else to edit:
+ 
+-    MAILKEEP_LLM_PROVIDER=portal        # portal | gemini | openrouter
+-    CORTENSOR_API_KEY=...               # or GEMINI_API_KEY / OPENROUTER_API_KEY
+-    MAILKEEP_LLM_MODEL=...              # optional override
++    MAILKEEP_LLM_PROVIDER=openrouter    # openrouter | gemini | portal | openai | custom
++    MAILKEEP_LLM_MODEL=openai/gpt-4.1-mini
++    MAILKEEP_LLM_API_KEY=sk-or-...      # or the provider's own name (OPENROUTER_API_KEY, ...)
++    MAILKEEP_LLM_BASE_URL=              # optional; required for "custom"
++
++Short aliases LLM_PROVIDER / LLM_MODEL / LLM_API_KEY / LLM_BASE_URL also work.
++Without MAILKEEP_LLM_PROVIDER the first provider whose key is present wins
++(OpenRouter, Gemini, Cortensor Portal, OpenAI).
+ 
+ Mailkeep then writes `.openminion/mailkeep-agent.json` itself, because:
+ 
+-* OpenMinion 0.1.7 has ONE `openai` provider slot. Cortensor Portal and Gemini
+-  are both "openai-compatible", so switching means rewriting that slot.
+ * `config init` writes `providers` *and* `system.providers`; the second one
+   silently wins (report OM-02). The generated file has no `system` block.
+ * An agent without `default_channel` fails every turn with
+@@ -22,10 +25,10 @@
+ 
+ import json
+ import os
+-from dataclasses import dataclass
++from dataclasses import dataclass, replace
  from pathlib import Path
  
- from .config import (
-+    REQUIRED_SCOPES,
-     SCOPES,
-     TOKEN_DIR,
-     TOKEN_FILE,
-@@ -39,20 +40,90 @@
- )
+-from .config import ROOT, setting
++from .config import ENV_FILE, FALLBACK_ENV_FILE, ROOT, setting
+ 
+ GENERATED_CONFIG = ROOT / ".openminion" / "mailkeep-agent.json"
+ 
+@@ -42,38 +45,79 @@
  
  
--def save_credentials(credentials) -> None:
--    TOKEN_DIR.mkdir(parents=True, exist_ok=True)
--    TOKEN_FILE.write_text(credentials.to_json(), encoding="utf-8")
-+def _write_private(path: Path, text: str) -> None:
-+    path.parent.mkdir(parents=True, exist_ok=True)
-+    path.write_text(text, encoding="utf-8")
-     try:
--        TOKEN_FILE.chmod(0o600)
-+        path.chmod(0o600)
-     except OSError:
-         pass
- 
- 
-+def mcp_token_path(email: str, base: Path = TOKEN_DIR) -> Path:
-+    """File name google_workspace_mcp's LocalDirectoryCredentialStore looks up."""
-+    return base / f"{urllib.parse.quote(email, safe='@._-')}.json"
-+
-+
-+def mcp_token_payload(credentials) -> dict:
-+    return {
-+        "token": credentials.token,
-+        "refresh_token": credentials.refresh_token,
-+        "token_uri": credentials.token_uri,
-+        "client_id": credentials.client_id,
-+        "client_secret": credentials.client_secret,
-+        "scopes": list(credentials.scopes or SCOPES),
-+        "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
-+    }
-+
-+
-+def _account_email(credentials) -> str:
-+    try:
-+        from googleapiclient.discovery import build
-+
-+        service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
-+        return str(service.users().getProfile(userId="me").execute().get("emailAddress", ""))
-+    except Exception:
-+        return ""
-+
-+
-+def save_credentials(credentials, email: str | None = None) -> None:
-+    """Save the token for Mailkeep and, in workspace-mcp's format, for the MCP
-+    server (same directory: WORKSPACE_MCP_CREDENTIALS_DIR = TOKEN_DIR), so
-+    scripts/start_gmail_mcp.py never asks for a second consent."""
-+    _write_private(TOKEN_FILE, credentials.to_json())
-+    if email is None:
-+        email = _account_email(credentials)
-+    if email:
-+        _write_private(mcp_token_path(email), json.dumps(mcp_token_payload(credentials), indent=2))
-+
-+
-+def missing_scopes(granted) -> list[str]:
-+    granted = set(granted or [])
-+    return [s for s in REQUIRED_SCOPES if s not in granted]
-+
-+
-+# Google `error=` values on the callback -> what to do about them.
-+CONSENT_ERRORS = {
-+    "access_denied": (
-+        "Google blocked the sign-in or it was declined. If Google said 'Access "
-+        "blocked: ... has not completed the Google verification process', open "
-+        "Google Cloud Console -> Google Auth Platform -> Audience and add your Gmail "
-+        "address under Test users (or publish the app), then sign in again and tick "
-+        "every Gmail checkbox."
-+    ),
-+    "admin_policy_enforced": "Your Google Workspace admin blocks this app.",
-+}
-+
-+
- def check_redirect(uri: str) -> None:
-     """Fail here, not on Google's error page, for unregistered Web-client URIs."""
--    if client_type() != "web":
-+    kind = client_type()
-+    if kind == "unknown":
-+        raise ConfigError(
-+            "Mailkeep cannot tell from the client ID whether your Google OAuth client "
-+            "is a 'Desktop app' or a 'Web application', and guessing wrong is what "
-+            "produces 'Error 400: redirect_uri_mismatch'. Pick the type in the setup "
-+            "screen, paste the downloaded client JSON, or set "
-+            "GOOGLE_OAUTH_CLIENT_TYPE=desktop|web in .openminion/gmail.env. "
-+            f"For a Web client, also register exactly: {uri}"
-+        )
-+    if kind != "web":
-         return
-     registered = registered_redirect_uris()
-+    if not registered:
-+        # Declared Web via env/UI: Google's list is not visible locally. The UI
-+        # shows the exact URI to register before sending the user to Google.
-+        return
-     if uri not in registered:
-         raise ConfigError(
-             "Your OAuth client is a 'Web application' and does not list the redirect "
-@@ -80,7 +151,7 @@
-             credentials.refresh(Request())
-         except Exception:
-             return None
--        save_credentials(credentials)  # was never persisted before -> refresh every run
-+        save_credentials(credentials, "")  # persist refresh; MCP refreshes its own copy
-     return credentials if credentials.valid else None
- 
- 
-@@ -162,6 +233,14 @@
-         # code= (not the callback URL) avoids oauthlib's https-only check on
-         # the http://localhost callback; PKCE verifier stays on the flow.
-         flow.fetch_token(code=code)
-+        lacking = missing_scopes(flow.credentials.scopes)
-+        if flow.credentials.scopes and lacking:
-+            # Gmail boxes unticked on Google's page: signed in, but no access.
-+            raise AuthRequired(
-+                "Signed in, but Gmail access was not granted ("
-+                + ", ".join(s.rsplit("/", 1)[-1] for s in lacking)
-+                + "). Sign in again and tick every checkbox on Google's page."
-+            )
-         save_credentials(flow.credentials)
-         return flow.credentials
- 
-@@ -187,4 +266,7 @@
-     except Exception:
-         pass
-     path.unlink()
-+    if path == TOKEN_FILE:
-+        for extra in TOKEN_DIR.glob("*@*.json"):  # workspace-mcp copies
-+            extra.unlink()
-     return True
-diff --git a/mailkeep/config.py b/mailkeep/config.py
---- a/mailkeep/config.py
-+++ b/mailkeep/config.py
-@@ -21,13 +21,31 @@
- # ("installed" = Desktop app, "web") decides whether the redirect URI
- # must be registered.
- CLIENT_SECRET_FILE = ROOT / ".openminion" / "client_secret.json"
-+# Client type chosen in the UI when only ID/secret are in gmail.env.
-+CLIENT_TYPE_FILE = ROOT / ".openminion" / "client_type"
- 
- # `gmail.modify` covers reading, labels, trash and read state.
- # `gmail.compose` covers drafts. Mailkeep never calls messages.send().
-+#
-+# One consent for Mailkeep AND google_workspace_mcp: this is exactly what
-+# workspace-mcp requests for `--permissions gmail:drafts` plus the identity
-+# scopes it uses to find the account. With the old two-scope token
-+# workspace-mcp found no matching grant and started a second consent on its
-+# own redirect URI (localhost:8001/oauth2callback). gmail.send is absent.
- SCOPES = (
-+    "openid",
-+    "https://www.googleapis.com/auth/userinfo.email",
-+    "https://www.googleapis.com/auth/gmail.readonly",
-+    "https://www.googleapis.com/auth/gmail.labels",
-+    "https://www.googleapis.com/auth/gmail.modify",
-+    "https://www.googleapis.com/auth/gmail.compose",
-+)
-+# What Mailkeep itself cannot work without (older two-scope tokens qualify).
-+REQUIRED_SCOPES = (
-     "https://www.googleapis.com/auth/gmail.modify",
-     "https://www.googleapis.com/auth/gmail.compose",
- )
-+MCP_GMAIL_PERMISSION = "gmail:drafts"
- 
- DEFAULT_LABEL_PREFIX = "Mailkeep"
- 
-@@ -119,7 +137,28 @@
-     found = _client_file_section()
-     if found:
-         return found[0]
--    return "web" if setting("GOOGLE_OAUTH_CLIENT_TYPE").lower() == "web" else "installed"
-+    # A client ID alone does not say whether it is Desktop or Web. The old
-+    # default ("installed") skipped the redirect check, so a Web client sent
-+    # an unregistered URI and Google answered `Error 400: redirect_uri_mismatch`.
-+    # Never guess: stay "unknown" until the user tells us.
-+    declared = setting("GOOGLE_OAUTH_CLIENT_TYPE").strip().lower()
-+    if not declared and CLIENT_TYPE_FILE.is_file():
-+        declared = CLIENT_TYPE_FILE.read_text(encoding="utf-8").strip().lower()
-+    if declared in {"web", "web application"}:
-+        return "web"
-+    if declared in {"installed", "desktop", "desktop app"}:
-+        return "installed"
-+    return "unknown"
-+
-+
-+def save_client_type(kind: str) -> str:
-+    """Remember 'installed' (Desktop app) or 'web' for env-file clients."""
-+    kind = {"desktop": "installed"}.get(kind.strip().lower(), kind.strip().lower())
-+    if kind not in {"installed", "web"}:
-+        raise ConfigError("Client type must be 'desktop' or 'web'.")
-+    CLIENT_TYPE_FILE.parent.mkdir(parents=True, exist_ok=True)
-+    CLIENT_TYPE_FILE.write_text(kind, encoding="utf-8")
-+    return kind
- 
- 
- def registered_redirect_uris() -> list[str]:
-@@ -135,7 +174,8 @@
-         kind, section = found
-         client_id, client_secret = section["client_id"], section.get("client_secret", "")
-     else:
--        kind = client_type()
-+        # google-auth accepts either key; "unknown" is stopped in auth.check_redirect.
-+        kind = "web" if client_type() == "web" else "installed"
-         client_id = setting("GOOGLE_OAUTH_CLIENT_ID")
-         client_secret = setting("GOOGLE_OAUTH_CLIENT_SECRET")
-     if not client_id or not client_secret:
-diff --git a/mailkeep/llm.py b/mailkeep/llm.py
---- a/mailkeep/llm.py
-+++ b/mailkeep/llm.py
-@@ -0,0 +1,102 @@
-+"""Model provider presets for the OpenMinion agent (Portal, Gemini, OpenRouter).
-+
-+Set in `.openminion/gmail.env`:
-+
-+    MAILKEEP_LLM_PROVIDER=portal        # portal | gemini | openrouter
-+    CORTENSOR_API_KEY=...               # or GEMINI_API_KEY / OPENROUTER_API_KEY
-+    MAILKEEP_LLM_MODEL=...              # optional override
-+
-+Mailkeep then writes `.openminion/mailkeep-agent.json` itself, because:
-+
-+* OpenMinion 0.1.7 has ONE `openai` provider slot. Cortensor Portal and Gemini
-+  are both "openai-compatible", so switching means rewriting that slot.
-+* `config init` writes `providers` *and* `system.providers`; the second one
-+  silently wins (report OM-02). The generated file has no `system` block.
-+* An agent without `default_channel` fails every turn with
-+  `inbound authenticity denied (reason=invalid_channel, mode=warn)`.
-+* OpenMinion reads `api_key_env` from the process environment only, not from
-+  gmail.env, so `export_key()` copies it over.
-+"""
-+
-+from __future__ import annotations
-+
-+import json
-+import os
-+from dataclasses import dataclass
-+from pathlib import Path
-+
-+from .config import ROOT, setting
-+
-+GENERATED_CONFIG = ROOT / ".openminion" / "mailkeep-agent.json"
-+
-+
-+@dataclass(frozen=True)
-+class Preset:
-+    key: str
-+    label: str
-+    slot: str  # OpenMinion provider name
-+    base_url: str
-+    key_env: str
-+    model: str
-+    timeout_seconds: int = 120
-+
-+
-+PRESETS: dict[str, Preset] = {
-+    # Values from openminion/modules/llm/setup_catalog.py (0.1.7).
+ PRESETS: dict[str, Preset] = {
+-    # Values from openminion/modules/llm/setup_catalog.py (0.1.7).
+-    "portal": Preset(
+-        "portal", "Cortensor Portal", "openai", "https://api.cortensor.app/v1",
+-        "CORTENSOR_API_KEY", "oss-20b", timeout_seconds=480,
++    # Order = auto-detect priority when no provider is named.
++    "openrouter": Preset(
++        "openrouter", "OpenRouter", "openrouter", "https://openrouter.ai/api/v1",
++        "OPENROUTER_API_KEY", "openai/gpt-4.1-mini",
+     ),
+     "gemini": Preset(
+         "gemini", "Gemini", "openai",
+         "https://generativelanguage.googleapis.com/v1beta/openai/",
+         "GEMINI_API_KEY", "gemini-2.5-flash",
+     ),
+-    "openrouter": Preset(
+-        "openrouter", "OpenRouter", "openrouter", "https://openrouter.ai/api/v1",
+-        "OPENROUTER_API_KEY", "openai/gpt-4.1-mini",
 +    "portal": Preset(
 +        "portal", "Cortensor Portal", "openai", "https://api.cortensor.app/v1",
 +        "CORTENSOR_API_KEY", "oss-20b", timeout_seconds=480,
 +    ),
-+    "gemini": Preset(
-+        "gemini", "Gemini", "openai",
-+        "https://generativelanguage.googleapis.com/v1beta/openai/",
-+        "GEMINI_API_KEY", "gemini-2.5-flash",
++    "openai": Preset(
++        "openai", "OpenAI", "openai", "https://api.openai.com/v1",
++        "OPENAI_API_KEY", "gpt-4.1-mini",
 +    ),
-+    "openrouter": Preset(
-+        "openrouter", "OpenRouter", "openrouter", "https://openrouter.ai/api/v1",
-+        "OPENROUTER_API_KEY", "openai/gpt-4.1-mini",
-+    ),
-+}
++    # Any OpenAI-compatible endpoint: set MAILKEEP_LLM_BASE_URL + model + key.
++    "custom": Preset(
++        "custom", "Custom (OpenAI-compatible)", "openai", "",
++        "MAILKEEP_LLM_API_KEY", "",
+     ),
+ }
++ALIASES = {"cortensor": "portal", "google": "gemini", "or": "openrouter"}
 +
 +
-+def selected() -> Preset | None:
-+    """The configured preset, or None when the user did not pick one."""
-+    key = setting("MAILKEEP_LLM_PROVIDER").strip().lower()
-+    if not key:
-+        return None
-+    if key not in PRESETS:
-+        raise ValueError(f"MAILKEEP_LLM_PROVIDER={key!r}; use one of {', '.join(PRESETS)}")
-+    return PRESETS[key]
++def _opt(name: str) -> str:
++    """MAILKEEP_LLM_<NAME>, falling back to the short LLM_<NAME> alias."""
++    return setting(f"MAILKEEP_LLM_{name}") or setting(f"LLM_{name}")
 +
 +
-+def build_config(preset: Preset) -> dict:
-+    return {
-+        "agents": {
-+            "openminion": {
-+                "name": "openminion",
-+                "provider": preset.slot,
-+                "default_channel": "console",
-+            }
-+        },
-+        "providers": {
-+            preset.slot: {
-+                "model": setting("MAILKEEP_LLM_MODEL") or preset.model,
-+                "base_url": preset.base_url,
-+                "api_key_env": preset.key_env,
-+                "timeout_seconds": preset.timeout_seconds,
-+            }
-+        },
++def _api_key(preset: Preset) -> str:
++    return _opt("API_KEY") or setting(preset.key_env)
+ 
+ 
+ def selected() -> Preset | None:
+-    """The configured preset, or None when the user did not pick one."""
+-    key = setting("MAILKEEP_LLM_PROVIDER").strip().lower()
+-    if not key:
+-        # No explicit choice: use whichever API key is present in gmail.env.
+-        for preset in PRESETS.values():
+-            if setting(preset.key_env):
+-                return preset
+-        return None
+-    if key not in PRESETS:
+-        raise ValueError(f"MAILKEEP_LLM_PROVIDER={key!r}; use one of {', '.join(PRESETS)}")
+-    return PRESETS[key]
++    """The configured provider (with model/base URL overrides applied)."""
++    key = _opt("PROVIDER").strip().lower()
++    key = ALIASES.get(key, key)
++    if key:
++        if key not in PRESETS:
++            raise ValueError(
++                f"MAILKEEP_LLM_PROVIDER={key!r} is unknown; use one of {', '.join(PRESETS)}"
++            )
++        preset = PRESETS[key]
++    else:
++        preset = next((p for p in PRESETS.values() if setting(p.key_env)), None)
++        if preset is None and _opt("API_KEY"):
++            raise ValueError("MAILKEEP_LLM_API_KEY is set but MAILKEEP_LLM_PROVIDER is not")
++        if preset is None:
++            return None
++    preset = replace(
++        preset,
++        model=_opt("MODEL") or preset.model,
++        base_url=_opt("BASE_URL") or preset.base_url,
++    )
++    if not preset.model:
++        raise ValueError(f"{preset.label}: set MAILKEEP_LLM_MODEL")
++    if not preset.base_url:
++        raise ValueError(f"{preset.label}: set MAILKEEP_LLM_BASE_URL")
++    return preset
+ 
+ 
+ def build_config(preset: Preset) -> dict:
++    provider = {
++        "model": preset.model,
++        "base_url": preset.base_url,
++        "api_key_env": preset.key_env,
++        "timeout_seconds": preset.timeout_seconds,
 +    }
-+
-+
-+def export_key(preset: Preset) -> bool:
-+    value = setting(preset.key_env)
-+    if value:
-+        os.environ.setdefault(preset.key_env, value)
-+    return bool(value)
-+
-+
-+def write_config(preset: Preset, path: Path = GENERATED_CONFIG) -> Path:
-+    path.parent.mkdir(parents=True, exist_ok=True)
-+    path.write_text(json.dumps(build_config(preset), indent=2), encoding="utf-8")
-+    return path
-diff --git a/mailkeep/static/index.html b/mailkeep/static/index.html
---- a/mailkeep/static/index.html
-+++ b/mailkeep/static/index.html
-@@ -173,10 +173,30 @@
-     box.append(ta, save, err);
-   } else {
-     box.append(el("p", "", "Step 2. Google will ask you to allow Mailkeep to read, label and trash mail and to create drafts. It cannot send mail. Your token stays on this computer."));
-+    if (st.client_type === "unknown") {
-+      // Only ID + secret are known (gmail.env). Guessing "Desktop" here is what
-+      // produced Google's "Error 400: redirect_uri_mismatch" for Web clients.
-+      box.append(el("p", "", "Which kind of OAuth client did you create? Google Cloud Console → Credentials shows it in the 'Type' column."));
-+      const pick = el("div", "row");
-+      for (const [type, label] of [["desktop", "Desktop app"], ["web", "Web application"]]) {
-+        const b = el("button", type === "desktop" ? "primary" : "", label);
-+        b.onclick = async () => {
-+          try { await api("/api/client-type", { type }); refresh(); } catch (e) { err.textContent = e.message; }
-+        };
-+        pick.append(b);
-+      }
-+      box.append(pick, err);
-+      log.append(box);
-+      return;
-+    }
-     if (st.client_type === "web") {
--      const p = el("p", "muted", "Your client is a Web application, so its Authorized redirect URIs must contain exactly ");
--      p.append(el("code", "", st.redirect_uri)); box.append(p);
-+      const p = el("p", "muted", "Your client is a Web application. Before signing in, add this exact line under Authorized redirect URIs and press Save (Google can take a few minutes to apply it): ");
-+      const copy = el("button", "", "Copy");
-+      copy.onclick = () => navigator.clipboard && navigator.clipboard.writeText(st.redirect_uri);
-+      p.append(el("code", "", st.redirect_uri), " ", copy); box.append(p);
-+      box.append(el("p", "muted", "localhost and 127.0.0.1 are different to Google, and so is a trailing slash."));
++    if preset.slot == "openrouter":
++        provider["app_name"] = "mailkeep"
+     return {
+         "agents": {
+             "openminion": {
+@@ -82,21 +126,15 @@
+                 "default_channel": "console",
+             }
+         },
+-        "providers": {
+-            preset.slot: {
+-                "model": setting("MAILKEEP_LLM_MODEL") or preset.model,
+-                "base_url": preset.base_url,
+-                "api_key_env": preset.key_env,
+-                "timeout_seconds": preset.timeout_seconds,
+-            }
+-        },
++        "providers": {preset.slot: provider},
      }
-+    box.append(el("p", "muted", "If Google says 'Access blocked', add your Gmail address under Google Auth Platform → Audience → Test users."));
-     const go = el("button", "primary", "Sign in with Google");
-     go.onclick = async () => {
-       const popup = window.open("", "mailkeep-oauth", "width=520,height=680");
-diff --git a/mailkeep/web.py b/mailkeep/web.py
---- a/mailkeep/web.py
-+++ b/mailkeep/web.py
-@@ -26,7 +26,14 @@
  
- from .agent import MailkeepAgent
- from .auth import WebLogin, cached_credentials, forget_token
--from .config import ConfigError, client_type, has_client_credentials, save_client_file, ui_redirect_uri
-+from .config import (
-+    ConfigError,
-+    client_type,
-+    has_client_credentials,
-+    save_client_file,
-+    save_client_type,
-+    ui_redirect_uri,
-+)
- from .demo import DemoGmailClient
- from .session import Outcome, Session
  
-@@ -146,7 +153,11 @@
-             error = (query.get("error") or [""])[0]
-             message = "Gmail connected. You can close this window."
-             if error:
--                message = f"Google did not grant access ({error}). Nothing was connected."
-+                from .auth import CONSENT_ERRORS
-+
-+                message = CONSENT_ERRORS.get(
-+                    error, f"Google did not grant access ({error}). Nothing was connected."
-+                )
-             else:
-                 try:
-                     credentials = app.login.finish(
-@@ -179,6 +190,8 @@
-             try:
-                 if route == "/api/client":
-                     return self._json(200, {"client_type": save_client_file(str(body.get("json", "")))})
-+                if route == "/api/client-type":
-+                    return self._json(200, {"client_type": save_client_type(str(body.get("type", "")))})
-                 if route == "/api/login":
-                     return self._json(200, {"url": app.login.start()})
-                 if route == "/api/logout":
-diff --git a/scripts/gmail.env.example b/scripts/gmail.env.example
---- a/scripts/gmail.env.example
-+++ b/scripts/gmail.env.example
-@@ -9,3 +9,16 @@
- # Optional overrides
- # WORKSPACE_MCP_PORT=8001
- # WORKSPACE_MCP_CREDENTIALS_DIR=C:/path/inside/this/project/.openminion/gmail/credentials
-+
-+# --- Google OAuth client type -------------------------------------------
-+# Mailkeep cannot tell Desktop from Web by the client ID. Set it here, pick it
-+# in the UI, or paste the downloaded client JSON instead of the two lines above.
-+# GOOGLE_OAUTH_CLIENT_TYPE=desktop     # desktop | web
-+# For "web" clients register exactly: http://localhost:8765/oauth/callback
-+
-+# --- AI agent (OpenMinion) ----------------------------------------------
-+# MAILKEEP_LLM_PROVIDER=portal          # portal | gemini | openrouter
-+# CORTENSOR_API_KEY=
-+# GEMINI_API_KEY=
-+# OPENROUTER_API_KEY=
-+# MAILKEEP_LLM_MODEL=                   # optional override
-diff --git a/scripts/start_gmail_mcp.py b/scripts/start_gmail_mcp.py
---- a/scripts/start_gmail_mcp.py
-+++ b/scripts/start_gmail_mcp.py
-@@ -76,7 +76,10 @@
-         "streamable-http",
-         "--single-user",
-         "--permissions",
--        "gmail:full",
-+        # Must equal mailkeep.config.MCP_GMAIL_PERMISSION. The old "full"
-+        # level added gmail.send + settings.basic, which the Mailkeep token
-+        # never holds, so workspace-mcp asked for a second consent.
-+        "gmail:drafts",
-         # Mailkeep never sends mail: drafts are the product boundary. Removing
-         # the tool server-side means the model cannot send even by mistake.
-         "--disabled-tools",
-diff --git a/tests/test_fixes.py b/tests/test_fixes.py
---- a/tests/test_fixes.py
-+++ b/tests/test_fixes.py
-@@ -0,0 +1,109 @@
-+"""Sign-in, shared MCP token and model provider fixes (no network)."""
-+
-+from __future__ import annotations
-+
-+import json
-+
-+import pytest
-+
-+from mailkeep import auth, config, llm
+ def export_key(preset: Preset) -> bool:
+-    value = setting(preset.key_env)
++    """Put the key where OpenMinion looks (process env, under key_env)."""
++    value = _api_key(preset)
+     if value:
+-        os.environ.setdefault(preset.key_env, value)
++        os.environ[preset.key_env] = value
+     return bool(value)
+ 
+ 
+@@ -104,3 +142,22 @@
+     path.parent.mkdir(parents=True, exist_ok=True)
+     path.write_text(json.dumps(build_config(preset), indent=2), encoding="utf-8")
+     return path
 +
 +
-+@pytest.fixture
-+def env_only_client(monkeypatch, tmp_path):
-+    monkeypatch.setattr(config, "CLIENT_SECRET_FILE", tmp_path / "none.json")
-+    monkeypatch.setattr(config, "CLIENT_TYPE_FILE", tmp_path / "client_type")
-+    monkeypatch.setattr(config, "ENV_FILE", tmp_path / "gmail.env")
-+    monkeypatch.setattr(config, "FALLBACK_ENV_FILE", tmp_path / "gmail2.env")
-+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "x.apps.googleusercontent.com")
-+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "s")
-+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_TYPE", raising=False)
-+
-+
-+def test_env_only_client_type_is_not_guessed(env_only_client):
-+    # The screenshot: env-only Web client was assumed Desktop -> redirect_uri_mismatch.
-+    assert config.client_type() == "unknown"
-+    with pytest.raises(config.ConfigError, match="redirect_uri_mismatch"):
-+        auth.check_redirect("http://localhost:8765/oauth/callback")
-+
-+
-+def test_type_picked_in_ui_is_remembered(env_only_client):
-+    assert config.save_client_type("desktop") == "installed"
-+    assert config.client_type() == "installed"
-+    auth.check_redirect("http://localhost:8765/oauth/callback")  # Desktop: no registration needed
-+    config.save_client_type("web")
-+    assert config.client_type() == "web"
-+
-+
-+def test_bad_client_type_rejected(env_only_client):
-+    with pytest.raises(config.ConfigError):
-+        config.save_client_type("tv")
-+
-+
-+def test_scopes_match_workspace_mcp_drafts_and_never_send():
-+    assert "https://www.googleapis.com/auth/gmail.send" not in config.SCOPES
-+    for scope in ("gmail.readonly", "gmail.labels", "gmail.modify", "gmail.compose", "userinfo.email"):
-+        assert f"https://www.googleapis.com/auth/{scope}" in config.SCOPES
-+    launcher = (config.ROOT / "scripts" / "start_gmail_mcp.py").read_text(encoding="utf-8")
-+    assert '"gmail:drafts"' in launcher and '"gmail:full"' not in launcher
-+
-+
-+def test_unticked_gmail_boxes_are_detected():
-+    assert auth.missing_scopes(["openid"]) == list(config.REQUIRED_SCOPES)
-+    assert auth.missing_scopes(config.SCOPES) == []
-+
-+
-+def test_mcp_token_written_in_workspace_mcp_format(tmp_path, monkeypatch):
-+    monkeypatch.setattr(auth, "TOKEN_FILE", tmp_path / "mailkeep-token.json")
-+    monkeypatch.setattr(auth, "TOKEN_DIR", tmp_path)
-+    monkeypatch.setattr(auth.mcp_token_path, "__defaults__", (tmp_path,))
-+
-+    class Creds:
-+        token, refresh_token, token_uri = "t", "r", "https://oauth2.googleapis.com/token"
-+        client_id, client_secret, scopes, expiry = "id", "sec", list(config.SCOPES), None
-+
-+        def to_json(self):
-+            return "{}"
-+
-+    auth.save_credentials(Creds(), "a.b+c@gmail.com")
-+    data = json.loads((tmp_path / "a.b%2Bc@gmail.com.json").read_text())
-+    assert data["refresh_token"] == "r" and data["client_id"] == "id"
-+
-+
-+def test_access_denied_explains_test_users():
-+    assert "Test users" in auth.CONSENT_ERRORS["access_denied"]
-+
-+
-+@pytest.mark.parametrize(
-+    "key,slot,base,env",
-+    [
-+        ("portal", "openai", "https://api.cortensor.app/v1", "CORTENSOR_API_KEY"),
-+        ("gemini", "openai", "https://generativelanguage.googleapis.com/v1beta/openai/", "GEMINI_API_KEY"),
-+        ("openrouter", "openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
-+    ],
-+)
-+def test_provider_presets(monkeypatch, key, slot, base, env):
-+    monkeypatch.setenv("MAILKEEP_LLM_PROVIDER", key)
-+    cfg = llm.build_config(llm.selected())
-+    assert cfg["agents"]["openminion"] == {"name": "openminion", "provider": slot, "default_channel": "console"}
-+    assert cfg["providers"][slot]["base_url"] == base
-+    assert cfg["providers"][slot]["api_key_env"] == env
-+    assert "system" not in cfg
-+
-+
-+def test_unknown_provider_falls_back_to_rules(monkeypatch):
-+    from mailkeep import agent
-+
-+    monkeypatch.setenv("MAILKEEP_LLM_PROVIDER", "nope")
-+    mode, reason = agent.resolve_mode()
-+    assert mode == "rules" and "nope" in reason
-+
-+
-+def test_selected_provider_without_key_falls_back(monkeypatch):
-+    from mailkeep import agent
-+
-+    monkeypatch.setenv("MAILKEEP_LLM_PROVIDER", "gemini")
-+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-+    monkeypatch.setattr(llm, "setting", lambda name: "gemini" if name == "MAILKEEP_LLM_PROVIDER" else "")
-+    mode, reason = agent.resolve_mode()
-+    assert mode == "rules" and "GEMINI_API_KEY" in reason
++def describe() -> list[str]:
++    """Startup diagnostics. Never prints a key, only whether one was found."""
++    files = [f"{p} ({'found' if p.is_file() else 'missing'})" for p in (ENV_FILE, FALLBACK_ENV_FILE)]
++    lines = ["env files: " + "; ".join(files)]
++    try:
++        preset = selected()
++    except ValueError as exc:
++        return lines + [f"LLM config error: {exc}"]
++    if preset is None:
++        return lines + ["LLM: none (no MAILKEEP_LLM_PROVIDER and no provider API key found)"]
++    key = _api_key(preset)
++    lines.append(f"LLM provider: {preset.label}  model: {preset.model}  base_url: {preset.base_url}")
++    lines.append(
++        f"LLM api key: {'present (' + str(len(key)) + ' chars)' if key else 'MISSING'}"
++        f"  (MAILKEEP_LLM_API_KEY or {preset.key_env})"
++    )
++    return lines
+diff -ruN -x .git -x __pycache__ -x .openminion base/mailkeep/static/index.html mk/mailkeep/static/index.html
+--- a/mailkeep/static/index.html	2026-10-19 13:35:23.295776022 +0000
++++ b/mailkeep/static/index.html	2026-10-19 13:36:15.942332203 +0000
+@@ -297,7 +297,7 @@
+   $("account").textContent = st.connected ? (st.demo ? "demo mailbox" : st.account) : "not connected";
+   $("account").className = "chip" + (st.connected ? " ok" : "");
+   $("mode").hidden = !st.mode;
+-  $("mode").textContent = st.mode === "openminion" ? "OpenMinion agent" : "rule parser";
++  $("mode").textContent = st.mode === "openminion" ? (st.mode_reason || "OpenMinion agent").replace(" via OpenMinion", "") : "rule parser (" + (st.mode_reason || "no model") + ")";
+   $("mode").title = st.mode_reason || "";
+   $("logout").hidden = !st.connected || st.demo;
+   $("clear").hidden = !st.connected;
+diff -ruN -x .git -x __pycache__ -x .openminion base/scripts/gmail.env.example mk/scripts/gmail.env.example
+--- a/scripts/gmail.env.example	2026-10-19 13:35:23.888923626 +0000
++++ b/scripts/gmail.env.example	2026-10-19 13:36:15.942400034 +0000
+@@ -17,11 +17,12 @@
+ # For "web" clients register exactly: http://localhost:8765/oauth/callback
+ 
+ # --- AI agent (OpenMinion) ----------------------------------------------
+-# MAILKEEP_LLM_PROVIDER=portal          # portal | gemini | openrouter
+-# CORTENSOR_API_KEY=
+-# GEMINI_API_KEY=
+-# OPENROUTER_API_KEY=
+-# MAILKEEP_LLM_MODEL=                   # optional override
++# Pick provider, model and key here; Mailkeep generates the OpenMinion config.
++MAILKEEP_LLM_PROVIDER=openrouter        # openrouter | gemini | portal | openai | custom
++MAILKEEP_LLM_MODEL=openai/gpt-4.1-mini  # any model id the provider offers
++MAILKEEP_LLM_API_KEY=                   # or OPENROUTER_API_KEY / GEMINI_API_KEY / CORTENSOR_API_KEY
++# MAILKEEP_LLM_BASE_URL=                # only for "custom" or a proxy
++# MAILKEEP_TRACE=0                      # hide the thinking process in the console
+ 
+ # --- Fix for "Error 403: access_denied" ---------------------------------
+ # Google only lets Test users of the client's own Cloud project sign in.

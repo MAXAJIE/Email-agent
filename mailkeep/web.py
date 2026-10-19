@@ -50,6 +50,7 @@ class App:
         self.lock = threading.Lock()
         self.agent: MailkeepAgent | None = None
         self.account = ""
+        self.auth_error = ""
         if demo:
             self.attach(DemoGmailClient())
 
@@ -89,6 +90,7 @@ class App:
             "redirect_uri": self.login.redirect,
             "mode": self.agent.mode if self.agent else "",
             "mode_reason": self.agent.reason if self.agent else "",
+            "auth_error": "" if connected else self.auth_error,
         }
 
     def disconnect(self) -> None:
@@ -151,12 +153,13 @@ def make_handler(app: App):
 
         def _callback(self, query: dict) -> None:
             error = (query.get("error") or [""])[0]
-            message = "Gmail connected. You can close this window."
+            message, ok = "Gmail connected. You can close this window.", True
             if error:
-                from .auth import CONSENT_ERRORS
+                from .auth import consent_error_message
 
-                message = CONSENT_ERRORS.get(
-                    error, f"Google did not grant access ({error}). Nothing was connected."
+                ok = False
+                message = consent_error_message(
+                    error, (query.get("error_description") or [""])[0][:300]
                 )
             else:
                 try:
@@ -168,15 +171,23 @@ def make_handler(app: App):
                     with app.lock:
                         app.attach(build_client(credentials))
                 except Exception as exc:
-                    message = f"Sign-in failed: {exc}"
+                    ok, message = False, f"Sign-in failed: {exc}"
+            app.auth_error = "" if ok else message
+            # BUG FIX: errors used to auto-close after 1.5 s, so the fix was
+            # unreadable. Close only on success; the main window also shows
+            # the error via /api/status.
+            closer = "setTimeout(()=>close(),1500)" if ok else ""
+            colour = "#5fbf8f" if ok else "#e5675f"
+            title = "Connected" if ok else "Google refused the sign-in"
             page = (
                 "<!doctype html><meta charset=utf-8><title>Mailkeep</title>"
-                "<body style='font:16px system-ui;padding:40px;background:#0f1115;color:#e7e9ee'>"
+                "<body style='font:16px system-ui;padding:40px;background:#0f1115;color:#e7e9ee;max-width:640px'>"
+                f"<h2 style='color:{colour}'>{title}</h2>"
                 f"<p>{html.escape(message)}</p><script>"
                 "try{opener&&opener.postMessage('mailkeep-auth',location.origin)}catch(e){}"
-                "setTimeout(()=>close(),1500)</script>"
+                f"{closer}</script>"
             )
-            self._send(200, page.encode(), "text/html; charset=utf-8")
+            self._send(200 if ok else 403, page.encode(), "text/html; charset=utf-8")
 
         def do_POST(self):
             if self.headers.get("Host", "") not in allowed_hosts or not self._authorized():
@@ -192,7 +203,12 @@ def make_handler(app: App):
                     return self._json(200, {"client_type": save_client_file(str(body.get("json", "")))})
                 if route == "/api/client-type":
                     return self._json(200, {"client_type": save_client_type(str(body.get("type", "")))})
+                if route == "/api/oauth-check":
+                    from .auth import oauth_checklist
+
+                    return self._json(200, oauth_checklist())
                 if route == "/api/login":
+                    app.auth_error = ""
                     return self._json(200, {"url": app.login.start()})
                 if route == "/api/logout":
                     app.disconnect()

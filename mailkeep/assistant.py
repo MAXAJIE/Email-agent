@@ -9,24 +9,28 @@ from .intents import Intent, parse_intent
 from .models import DraftResult, Email, Response, Table
 from .trash import analyze_trash, human_bytes
 
-HELP_TEXT = """Mailkeep commands (plain English or slash commands)
+HELP_TEXT = """Mailkeep commands — type plain English or a slash command.
 
-  find invoices from last month      search mail (also: find newsletters, jobs,
-                                     travel, receipts, promotions, attachments,
-                                     unread, starred, "in trash")
-  /search <gmail query>              exact Gmail query
-  analyze trash                      trash report + restore candidates
-  label 1-3 as Finance               add a label (creates it if needed)
-  unlabel 1-3 from Finance           remove a label
-  draft a reply to 2 saying thanks   create a draft in the same thread
-  draft to bob@example.com about Q4 saying ...   new draft
-  restore 1-2 / archive 3 / mark 1 read / delete 4
-  open 2                             read one message
-  labels / status / help / quit
+Search
+• find invoices from last month — search mail
+  (also: newsletters, jobs, travel, receipts, promotions, attachments, unread, starred, "in trash")
+• /search <gmail query> — run an exact Gmail query
+• open 2 — read message 2
 
-Numbered references point at the last list you saw (find results or the trash
-report's restore candidates). Writes are previewed and need a y/N confirmation.
-Mailkeep can create drafts but cannot send mail: the send tool is not present.
+Organize
+• label 1-3 as Finance — add a label (created if needed)
+• unlabel 1-3 from Finance — remove a label
+• restore 1-2 · archive 3 · mark 1 read · delete 4
+• analyze trash — trash report + restore candidates
+
+Drafts
+• draft a reply to 2 saying thanks — draft in the same thread
+• draft to bob@example.com about Q4 saying ... — new draft
+
+Other
+• labels · status · help · quit
+
+Numbers refer to the last list you saw. Every change is previewed and needs your approval. Mailkeep only creates drafts; it never sends mail.
 """
 
 

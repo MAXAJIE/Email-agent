@@ -162,8 +162,8 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         nargs="?",
         default="chat",
-        choices=["chat", "ui", "login", "status", "logout"],
-        help="chat (default), ui (local window), login, status, logout",
+        choices=["chat", "ui", "login", "status", "logout", "oauth-check"],
+        help="chat (default), ui (local window), login, status, logout, oauth-check",
     )
     parser.add_argument("--demo", action="store_true", help="use in-memory demo mail")
     parser.add_argument("--limit", type=int, default=20, help="max search results")
@@ -183,6 +183,17 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "status":
         return _status(console)
+    if args.command == "oauth-check":
+        from .auth import oauth_checklist
+
+        info = oauth_checklist()
+        console.print(Text(f"Cloud project number : {info['project_number']}"))
+        console.print(Text(f"Client type          : {info['client_type'] or 'not configured'}"))
+        console.print(Text(f"Pre-selected account : {info['login_hint'] or '(set MAILKEEP_GMAIL_ACCOUNT)'}"))
+        console.print(Text(f"Open                 : {info['audience_url']}"))
+        for i, step in enumerate(info["steps"], 1):
+            console.print(Text(f"  {i}. {step}"))
+        return 0
     if args.command == "logout":
         from .auth import forget_token
 
