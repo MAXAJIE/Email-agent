@@ -1,0 +1,9 @@
+﻿{
+  "ok": true,
+  "skill_id": "email-triage",
+  "version_hash": "5af91e0e5085e9fb090ec65df6684a6ee5311b6ba6fb135234b5f476cf808309",
+  "warnings": [
+    "parse.warning:companion_metadata_unavailable",
+    "admission.pending"
+  ]
+}

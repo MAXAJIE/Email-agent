@@ -1,0 +1,33 @@
+# Procedure
+1. Search unread mail first. Search returns IDs and links only, so batch-fetch
+   content before summarising or classifying.
+2. Classify each message into exactly one bucket.
+   - `重要` — known contact, explicit action request, or an urgent deadline.
+   - `需跟进` — needs a reply but not urgently.
+   - `可忽略` — newsletters, automated notices, no action required.
+3. Render the batch as a numbered list. Each line carries the message ID, the
+   sender, the subject, the bucket, and the target label. This list is the
+   review surface because the built-in approval prompt does not enumerate
+   Gmail message or label IDs.
+4. Ask for approval with three options: approve all, approve a subset, or
+   cancel. A partial approval names the exceptions; apply only the approved
+   subset.
+5. On approval, resolve or create the labels and apply the batch. On cancel,
+   perform no write and ask which classification rule should change.
+6. Report the result as completed and failed counts, then record the user's
+   corrections as a memory candidate.
+
+# Verification
+Re-read the first changed message and confirm the label ID is present. Compare
+the applied message IDs against the approved list. A successful API call is not
+proof that the user-visible state changed.
+
+# Rollback
+Reverse a batch with the inverse remove_label_ids call on the same message IDs.
+No message is ever moved to Trash by this skill, so no restore step is needed.
+
+# Safety
+This skill never deletes, never trashes, and never sends. Sending is not
+registered in this workspace, and deletion is out of scope by design. Never
+present a count-only approval request such as "process 30 messages"; the list
+must name the specific mail.

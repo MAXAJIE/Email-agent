@@ -1,0 +1,9 @@
+﻿{
+  "ok": true,
+  "skill_id": "email-draft",
+  "version_hash": "3cfe7616a782f81f3c5b36a9574366138ec3cf3feb7f25d0906c366ba8647d1d",
+  "warnings": [
+    "parse.warning:companion_metadata_unavailable",
+    "admission.pending"
+  ]
+}

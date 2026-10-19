@@ -1,0 +1,1 @@
+source_type=skill; source_ref=artifact://sha256/430dd91c91ded23fa70755ef16335f7afa58becc031f8af4dfbbb639c966aab1; scope=global; title=email-triage; tags=skill; summary=# Procedure 1.

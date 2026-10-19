@@ -1,0 +1,9 @@
+# Local runtime state (databases, logs, OAuth tokens) and secrets.
+.openminion/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local Gmail OAuth client values (template: scripts/gmail.env.example).
+scripts/gmail.env

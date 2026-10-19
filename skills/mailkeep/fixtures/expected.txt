@@ -1,0 +1,17 @@
+Search returned 3 messages for "invoice newer_than:30d".
+
+The following batch will be labelled Finance (label does not exist yet and will be created as part of this approved write):
+
+1. 18f2a1c4d9e00002 | billing@vendor.example | Invoice INV-2026-1042 for October | 2026-10-12
+2. 18f2a1c4d9e00006 | accounts@supplier.example | Invoice INV-2026-1051 for October | 2026-10-14
+3. 18f2a1c4d9e00007 | finance@partner.example | Invoice INV-2026-1063 for October | 2026-10-16
+
+Apply label Finance to these 3 messages? (y/N)
+
+--- after approval ---
+
+Created label Finance (Label_42) and applied it to 3 messages.
+Completed 3, failed 0.
+Verified: re-read 18f2a1c4d9e00002 and confirmed Label_42 is present.
+Nothing was sent. No message was moved to Trash.
+

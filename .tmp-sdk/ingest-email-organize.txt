@@ -1,0 +1,9 @@
+﻿{
+  "ok": true,
+  "skill_id": "email-organize",
+  "version_hash": "759632fdb71441d4e178f2436d3c17ef5105e8b3584cc4fbfae5dad7cdf385c3",
+  "warnings": [
+    "parse.warning:companion_metadata_unavailable",
+    "admission.pending"
+  ]
+}

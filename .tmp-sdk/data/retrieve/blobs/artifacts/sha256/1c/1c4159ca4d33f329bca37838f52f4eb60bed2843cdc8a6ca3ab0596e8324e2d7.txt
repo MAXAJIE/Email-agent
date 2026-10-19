@@ -1,0 +1,26 @@
+# Procedure
+1. Search for the messages that carry the attachments. Search returns IDs only,
+   so fetch content before reading attachment metadata.
+2. Read attachment filenames, MIME types, and attachment IDs from message
+   content. There is no separate list-attachments tool in this workspace.
+3. Classify each attachment into invoices, receipts, contracts, or unsorted.
+   Anything uncertain goes to unsorted; do not guess a category.
+4. List the destination folders and mark filename collisions.
+5. Print the exact folder tree and every file to be written, with the source
+   message subject, then ask for approval.
+6. On approval, download one attachment at a time and write each file to its
+   planned workspace-relative path.
+7. Report written and skipped counts with reasons.
+
+# Verification
+List the destination folders and compare the written files against the approved
+plan. Report the observed filesystem state rather than assuming success.
+
+# Rollback
+Move an unwanted file to Trash with the file tool, or delete it after the user
+confirms. Never delete or modify a Gmail message as part of this skill.
+
+# Safety
+Every path must stay inside the workspace. Never overwrite an existing file
+without telling the user; rename it or ask. Never write to an absolute path
+outside the workspace, and never treat a downloaded attachment as executable.

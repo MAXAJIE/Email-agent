@@ -1,0 +1,15 @@
+﻿{
+  "ok": true,
+  "skill_id": "email-triage",
+  "previous_active_version_hash": null,
+  "active_version_hash": "5af91e0e5085e9fb090ec65df6684a6ee5311b6ba6fb135234b5f476cf808309",
+  "target_status": "verified",
+  "admission_state": "admitted",
+  "reviewer_id": "local:Chin Jie",
+  "reason": "mailkeep MVP triage skill",
+  "updated_at": "2026-10-19T07:23:44.790601+00:00",
+  "verification_check": null,
+  "verification_result": null,
+  "verification_evidence_ref": null,
+  "verification_reviewer_id": null
+}

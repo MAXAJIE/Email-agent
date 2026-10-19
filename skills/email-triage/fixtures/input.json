@@ -1,0 +1,38 @@
+{
+  "request": "帮我看看收件箱有什么重要邮件",
+  "gmail_query": "is:unread",
+  "page_size": 30,
+  "messages": [
+    {
+      "message_id": "18f2a1c4d9e00001",
+      "sender": "zhang.san@example.com",
+      "subject": "Q4 contract needs your signature before Friday",
+      "snippet": "Please sign and return the attached contract by Friday 18:00.",
+      "expected_bucket": "重要",
+      "expected_label": "Mailkeep/Important"
+    },
+    {
+      "message_id": "18f2a1c4d9e00002",
+      "sender": "billing@vendor.example",
+      "subject": "Invoice INV-2026-1042 for October",
+      "snippet": "Your invoice is attached. Payment is due in 30 days.",
+      "expected_bucket": "需跟进",
+      "expected_label": "Mailkeep/Follow-up"
+    },
+    {
+      "message_id": "18f2a1c4d9e00003",
+      "sender": "newsletter@deals.example",
+      "subject": "48 hours only: 70% off everything",
+      "snippet": "Unsubscribe from this promotional list.",
+      "expected_bucket": "可忽略",
+      "expected_label": "Mailkeep/Ignorable"
+    }
+  ],
+  "user_approval": {
+    "decision": "partial",
+    "approved_message_ids": ["18f2a1c4d9e00001", "18f2a1c4d9e00003"],
+    "excluded_message_ids": ["18f2a1c4d9e00002"],
+    "note": "The invoice is already paid, do not label it."
+  }
+}
+

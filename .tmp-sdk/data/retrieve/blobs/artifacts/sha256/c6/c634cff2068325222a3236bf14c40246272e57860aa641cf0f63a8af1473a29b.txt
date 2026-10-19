@@ -1,0 +1,1 @@
+source_type=skill; source_ref=artifact://sha256/72724fee8712c028aeb99ad4113ee849df9c772646a4463470b124e487bc9d7c; scope=global; title=email-draft; tags=skill; summary=# Safety This skill creates drafts and stops there.

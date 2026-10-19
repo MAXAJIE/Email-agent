@@ -1,0 +1,5 @@
+# Safety
+This skill creates drafts and stops there. If the user asks to send directly,
+say that sending is outside this skill and outside this workspace's registered
+tools, and leave the final send to the user in Gmail. Never create a draft
+without first printing its full content.

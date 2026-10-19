@@ -1,0 +1,48 @@
+﻿=== email-triage ===
+skill_id=email-triage risk=medium
+tools=['mcp.workspace.search_gmail_messages', 'mcp.workspace.get_gmail_messages_content_batch', 'mcp.workspace.get_gmail_message_content', 'mcp.workspace.list_gmail_labels', 'mcp.workspace.batch_modify_gmail_message_labels', 'mcp.workspace.modify_gmail_message_labels']
+warnings=['parse.warning:companion_metadata_unavailable', 'admission.duplicate_content']
+steps=7
+  search-unread -> mcp.workspace.search_gmail_messages
+  read-batch -> mcp.workspace.get_gmail_messages_content_batch
+  read-one -> mcp.workspace.get_gmail_message_content
+  resolve-labels -> mcp.workspace.list_gmail_labels
+  print-batch -> None
+  apply-batch -> mcp.workspace.batch_modify_gmail_message_labels
+  record-preference -> None
+  contains 'ΘçìΦªü': True
+  contains 'Θ£ÇΦ╖ƒΦ┐¢': True
+  contains 'σÅ»σ┐╜τòÑ': True
+
+=== email-draft ===
+skill_id=email-draft risk=medium
+tools=['mcp.workspace.search_gmail_messages', 'mcp.workspace.get_gmail_message_content', 'mcp.workspace.get_gmail_thread_content', 'mcp.workspace.draft_gmail_message']
+warnings=['parse.warning:companion_metadata_unavailable', 'admission.pending']
+steps=6
+  locate-thread -> mcp.workspace.search_gmail_messages
+  read-original -> mcp.workspace.get_gmail_message_content
+  read-thread -> mcp.workspace.get_gmail_thread_content
+  compose -> None
+  print-draft -> None
+  create-draft -> mcp.workspace.draft_gmail_message
+  contains 'ΘçìΦªü': False
+  contains 'Θ£ÇΦ╖ƒΦ┐¢': False
+  contains 'σÅ»σ┐╜τòÑ': False
+
+=== email-organize ===
+skill_id=email-organize risk=medium
+tools=['mcp.workspace.search_gmail_messages', 'mcp.workspace.get_gmail_messages_content_batch', 'mcp.workspace.get_gmail_message_content', 'mcp.workspace.get_gmail_attachment_content', 'file.write', 'file.list_dir']
+warnings=['parse.warning:companion_metadata_unavailable', 'admission.pending']
+steps=8
+  search-source -> mcp.workspace.search_gmail_messages
+  read-attachments -> mcp.workspace.get_gmail_messages_content_batch
+  read-one -> mcp.workspace.get_gmail_message_content
+  plan-folders -> None
+  check-collisions -> file.list_dir
+  print-plan -> None
+  download-attachment -> mcp.workspace.get_gmail_attachment_content
+  write-file -> file.write
+  contains 'ΘçìΦªü': False
+  contains 'Θ£ÇΦ╖ƒΦ┐¢': False
+  contains 'σÅ»σ┐╜τòÑ': False
+
