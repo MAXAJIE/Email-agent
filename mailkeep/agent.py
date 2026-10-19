@@ -94,6 +94,17 @@ def _build_tool():
 
 
 def config_path() -> Path:
+    """MAILKEEP_LLM_PROVIDER (portal/gemini/openrouter) wins: it generates a
+    known-good OpenMinion config. Otherwise use the user's own file."""
+    from . import llm
+
+    try:
+        preset = llm.selected()
+    except ValueError:
+        preset = None
+    if preset is not None:
+        llm.export_key(preset)
+        return llm.write_config(preset)
     return Path(setting("MAILKEEP_OPENMINION_CONFIG") or OPENMINION_DIR / "agents.json")
 
 
@@ -116,6 +127,17 @@ def resolve_mode() -> tuple[str, str]:
         import openminion  # noqa: F401
     except Exception:
         return "rules", "openminion is not installed"
+    from . import llm
+
+    try:
+        preset = llm.selected()
+    except ValueError as exc:
+        return "rules", str(exc)
+    if preset is not None:
+        if not llm.export_key(preset):
+            return "rules", f"{preset.label} selected but {preset.key_env} is not set"
+        model = setting("MAILKEEP_LLM_MODEL") or preset.model
+        return "openminion", f"{preset.label} ({model}) via OpenMinion"
     provider = configured_provider()
     if not provider:
         return "rules", f"no OpenMinion config at {config_path()}"

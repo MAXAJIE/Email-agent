@@ -76,7 +76,10 @@ def main(argv: list[str]) -> int:
         "streamable-http",
         "--single-user",
         "--permissions",
-        "gmail:full",
+        # Must equal mailkeep.config.MCP_GMAIL_PERMISSION. The old "full"
+        # level added gmail.send + settings.basic, which the Mailkeep token
+        # never holds, so workspace-mcp asked for a second consent.
+        "gmail:drafts",
         # Mailkeep never sends mail: drafts are the product boundary. Removing
         # the tool server-side means the model cannot send even by mistake.
         "--disabled-tools",

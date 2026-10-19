@@ -21,13 +21,31 @@ TOKEN_FILE = TOKEN_DIR / "mailkeep-token.json"
 # ("installed" = Desktop app, "web") decides whether the redirect URI
 # must be registered.
 CLIENT_SECRET_FILE = ROOT / ".openminion" / "client_secret.json"
+# Client type chosen in the UI when only ID/secret are in gmail.env.
+CLIENT_TYPE_FILE = ROOT / ".openminion" / "client_type"
 
 # `gmail.modify` covers reading, labels, trash and read state.
 # `gmail.compose` covers drafts. Mailkeep never calls messages.send().
+#
+# One consent for Mailkeep AND google_workspace_mcp: this is exactly what
+# workspace-mcp requests for `--permissions gmail:drafts` plus the identity
+# scopes it uses to find the account. With the old two-scope token
+# workspace-mcp found no matching grant and started a second consent on its
+# own redirect URI (localhost:8001/oauth2callback). gmail.send is absent.
 SCOPES = (
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.labels",
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.compose",
 )
+# What Mailkeep itself cannot work without (older two-scope tokens qualify).
+REQUIRED_SCOPES = (
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.compose",
+)
+MCP_GMAIL_PERMISSION = "gmail:drafts"
 
 DEFAULT_LABEL_PREFIX = "Mailkeep"
 
@@ -119,7 +137,28 @@ def client_type() -> str:
     found = _client_file_section()
     if found:
         return found[0]
-    return "web" if setting("GOOGLE_OAUTH_CLIENT_TYPE").lower() == "web" else "installed"
+    # A client ID alone does not say whether it is Desktop or Web. The old
+    # default ("installed") skipped the redirect check, so a Web client sent
+    # an unregistered URI and Google answered `Error 400: redirect_uri_mismatch`.
+    # Never guess: stay "unknown" until the user tells us.
+    declared = setting("GOOGLE_OAUTH_CLIENT_TYPE").strip().lower()
+    if not declared and CLIENT_TYPE_FILE.is_file():
+        declared = CLIENT_TYPE_FILE.read_text(encoding="utf-8").strip().lower()
+    if declared in {"web", "web application"}:
+        return "web"
+    if declared in {"installed", "desktop", "desktop app"}:
+        return "installed"
+    return "unknown"
+
+
+def save_client_type(kind: str) -> str:
+    """Remember 'installed' (Desktop app) or 'web' for env-file clients."""
+    kind = {"desktop": "installed"}.get(kind.strip().lower(), kind.strip().lower())
+    if kind not in {"installed", "web"}:
+        raise ConfigError("Client type must be 'desktop' or 'web'.")
+    CLIENT_TYPE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CLIENT_TYPE_FILE.write_text(kind, encoding="utf-8")
+    return kind
 
 
 def registered_redirect_uris() -> list[str]:
@@ -135,7 +174,8 @@ def client_config(redirect: str | None = None) -> dict:
         kind, section = found
         client_id, client_secret = section["client_id"], section.get("client_secret", "")
     else:
-        kind = client_type()
+        # google-auth accepts either key; "unknown" is stopped in auth.check_redirect.
+        kind = "web" if client_type() == "web" else "installed"
         client_id = setting("GOOGLE_OAUTH_CLIENT_ID")
         client_secret = setting("GOOGLE_OAUTH_CLIENT_SECRET")
     if not client_id or not client_secret:

@@ -1,1785 +1,584 @@
-diff --git a/.gitignore b/.gitignore
-index 79faf1e..33b7d71 100644
---- a/.gitignore
-+++ b/.gitignore
-@@ -7,3 +7,7 @@ __pycache__/
- 
- # Local Gmail OAuth client values (template: scripts/gmail.env.example).
- scripts/gmail.env
-+
-+# SDK probe scratch (sqlite state) and IDE files; never commit.
-+.tmp-sdk/
-+.idea/
-diff --git a/README.md b/README.md
-index 66c3bd10d31e80c25fcce8f13d731c95310ec178..cdac355be18756561297790a15a5d8e12aee6a99 100644
-GIT binary patch
-literal 9246
-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
-DH1KGT
-
-literal 15046
-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
-RkWoE|k3lsSDE?q+4*>0Q>*@di
-
 diff --git a/mailkeep/agent.py b/mailkeep/agent.py
-new file mode 100644
-index 0000000..fc7fefe
---- /dev/null
+--- a/mailkeep/agent.py
 +++ b/mailkeep/agent.py
-@@ -0,0 +1,223 @@
-+"""OpenMinion agent layer for Mailkeep.
+@@ -94,6 +94,17 @@
+ 
+ 
+ def config_path() -> Path:
++    """MAILKEEP_LLM_PROVIDER (portal/gemini/openrouter) wins: it generates a
++    known-good OpenMinion config. Otherwise use the user's own file."""
++    from . import llm
 +
-+The model never touches Gmail directly. It gets one decorated tool,
-+``mailkeep_command``, which runs the deterministic Mailkeep command grammar
-+through ``Session``. Reads return text; writes come back as AWAITING_APPROVAL
-+and run only when the user presses Approve in the UI (no model involved).
++    try:
++        preset = llm.selected()
++    except ValueError:
++        preset = None
++    if preset is not None:
++        llm.export_key(preset)
++        return llm.write_config(preset)
+     return Path(setting("MAILKEEP_OPENMINION_CONFIG") or OPENMINION_DIR / "agents.json")
+ 
+ 
+@@ -116,6 +127,17 @@
+         import openminion  # noqa: F401
+     except Exception:
+         return "rules", "openminion is not installed"
++    from . import llm
 +
-+Without OpenMinion, or with the ``echo`` provider (no model, never calls
-+tools), the rule-based parser answers instead.
++    try:
++        preset = llm.selected()
++    except ValueError as exc:
++        return "rules", str(exc)
++    if preset is not None:
++        if not llm.export_key(preset):
++            return "rules", f"{preset.label} selected but {preset.key_env} is not set"
++        model = setting("MAILKEEP_LLM_MODEL") or preset.model
++        return "openminion", f"{preset.label} ({model}) via OpenMinion"
+     provider = configured_provider()
+     if not provider:
+         return "rules", f"no OpenMinion config at {config_path()}"
+diff --git a/mailkeep/auth.py b/mailkeep/auth.py
+--- a/mailkeep/auth.py
++++ b/mailkeep/auth.py
+@@ -23,6 +23,7 @@
+ from pathlib import Path
+ 
+ from .config import (
++    REQUIRED_SCOPES,
+     SCOPES,
+     TOKEN_DIR,
+     TOKEN_FILE,
+@@ -39,20 +40,90 @@
+ )
+ 
+ 
+-def save_credentials(credentials) -> None:
+-    TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+-    TOKEN_FILE.write_text(credentials.to_json(), encoding="utf-8")
++def _write_private(path: Path, text: str) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(text, encoding="utf-8")
+     try:
+-        TOKEN_FILE.chmod(0o600)
++        path.chmod(0o600)
+     except OSError:
+         pass
+ 
+ 
++def mcp_token_path(email: str, base: Path = TOKEN_DIR) -> Path:
++    """File name google_workspace_mcp's LocalDirectoryCredentialStore looks up."""
++    return base / f"{urllib.parse.quote(email, safe='@._-')}.json"
++
++
++def mcp_token_payload(credentials) -> dict:
++    return {
++        "token": credentials.token,
++        "refresh_token": credentials.refresh_token,
++        "token_uri": credentials.token_uri,
++        "client_id": credentials.client_id,
++        "client_secret": credentials.client_secret,
++        "scopes": list(credentials.scopes or SCOPES),
++        "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
++    }
++
++
++def _account_email(credentials) -> str:
++    try:
++        from googleapiclient.discovery import build
++
++        service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
++        return str(service.users().getProfile(userId="me").execute().get("emailAddress", ""))
++    except Exception:
++        return ""
++
++
++def save_credentials(credentials, email: str | None = None) -> None:
++    """Save the token for Mailkeep and, in workspace-mcp's format, for the MCP
++    server (same directory: WORKSPACE_MCP_CREDENTIALS_DIR = TOKEN_DIR), so
++    scripts/start_gmail_mcp.py never asks for a second consent."""
++    _write_private(TOKEN_FILE, credentials.to_json())
++    if email is None:
++        email = _account_email(credentials)
++    if email:
++        _write_private(mcp_token_path(email), json.dumps(mcp_token_payload(credentials), indent=2))
++
++
++def missing_scopes(granted) -> list[str]:
++    granted = set(granted or [])
++    return [s for s in REQUIRED_SCOPES if s not in granted]
++
++
++# Google `error=` values on the callback -> what to do about them.
++CONSENT_ERRORS = {
++    "access_denied": (
++        "Google blocked the sign-in or it was declined. If Google said 'Access "
++        "blocked: ... has not completed the Google verification process', open "
++        "Google Cloud Console -> Google Auth Platform -> Audience and add your Gmail "
++        "address under Test users (or publish the app), then sign in again and tick "
++        "every Gmail checkbox."
++    ),
++    "admin_policy_enforced": "Your Google Workspace admin blocks this app.",
++}
++
++
+ def check_redirect(uri: str) -> None:
+     """Fail here, not on Google's error page, for unregistered Web-client URIs."""
+-    if client_type() != "web":
++    kind = client_type()
++    if kind == "unknown":
++        raise ConfigError(
++            "Mailkeep cannot tell from the client ID whether your Google OAuth client "
++            "is a 'Desktop app' or a 'Web application', and guessing wrong is what "
++            "produces 'Error 400: redirect_uri_mismatch'. Pick the type in the setup "
++            "screen, paste the downloaded client JSON, or set "
++            "GOOGLE_OAUTH_CLIENT_TYPE=desktop|web in .openminion/gmail.env. "
++            f"For a Web client, also register exactly: {uri}"
++        )
++    if kind != "web":
+         return
+     registered = registered_redirect_uris()
++    if not registered:
++        # Declared Web via env/UI: Google's list is not visible locally. The UI
++        # shows the exact URI to register before sending the user to Google.
++        return
+     if uri not in registered:
+         raise ConfigError(
+             "Your OAuth client is a 'Web application' and does not list the redirect "
+@@ -80,7 +151,7 @@
+             credentials.refresh(Request())
+         except Exception:
+             return None
+-        save_credentials(credentials)  # was never persisted before -> refresh every run
++        save_credentials(credentials, "")  # persist refresh; MCP refreshes its own copy
+     return credentials if credentials.valid else None
+ 
+ 
+@@ -162,6 +233,14 @@
+         # code= (not the callback URL) avoids oauthlib's https-only check on
+         # the http://localhost callback; PKCE verifier stays on the flow.
+         flow.fetch_token(code=code)
++        lacking = missing_scopes(flow.credentials.scopes)
++        if flow.credentials.scopes and lacking:
++            # Gmail boxes unticked on Google's page: signed in, but no access.
++            raise AuthRequired(
++                "Signed in, but Gmail access was not granted ("
++                + ", ".join(s.rsplit("/", 1)[-1] for s in lacking)
++                + "). Sign in again and tick every checkbox on Google's page."
++            )
+         save_credentials(flow.credentials)
+         return flow.credentials
+ 
+@@ -187,4 +266,7 @@
+     except Exception:
+         pass
+     path.unlink()
++    if path == TOKEN_FILE:
++        for extra in TOKEN_DIR.glob("*@*.json"):  # workspace-mcp copies
++            extra.unlink()
+     return True
+diff --git a/mailkeep/config.py b/mailkeep/config.py
+--- a/mailkeep/config.py
++++ b/mailkeep/config.py
+@@ -21,13 +21,31 @@
+ # ("installed" = Desktop app, "web") decides whether the redirect URI
+ # must be registered.
+ CLIENT_SECRET_FILE = ROOT / ".openminion" / "client_secret.json"
++# Client type chosen in the UI when only ID/secret are in gmail.env.
++CLIENT_TYPE_FILE = ROOT / ".openminion" / "client_type"
+ 
+ # `gmail.modify` covers reading, labels, trash and read state.
+ # `gmail.compose` covers drafts. Mailkeep never calls messages.send().
++#
++# One consent for Mailkeep AND google_workspace_mcp: this is exactly what
++# workspace-mcp requests for `--permissions gmail:drafts` plus the identity
++# scopes it uses to find the account. With the old two-scope token
++# workspace-mcp found no matching grant and started a second consent on its
++# own redirect URI (localhost:8001/oauth2callback). gmail.send is absent.
+ SCOPES = (
++    "openid",
++    "https://www.googleapis.com/auth/userinfo.email",
++    "https://www.googleapis.com/auth/gmail.readonly",
++    "https://www.googleapis.com/auth/gmail.labels",
++    "https://www.googleapis.com/auth/gmail.modify",
++    "https://www.googleapis.com/auth/gmail.compose",
++)
++# What Mailkeep itself cannot work without (older two-scope tokens qualify).
++REQUIRED_SCOPES = (
+     "https://www.googleapis.com/auth/gmail.modify",
+     "https://www.googleapis.com/auth/gmail.compose",
+ )
++MCP_GMAIL_PERMISSION = "gmail:drafts"
+ 
+ DEFAULT_LABEL_PREFIX = "Mailkeep"
+ 
+@@ -119,7 +137,28 @@
+     found = _client_file_section()
+     if found:
+         return found[0]
+-    return "web" if setting("GOOGLE_OAUTH_CLIENT_TYPE").lower() == "web" else "installed"
++    # A client ID alone does not say whether it is Desktop or Web. The old
++    # default ("installed") skipped the redirect check, so a Web client sent
++    # an unregistered URI and Google answered `Error 400: redirect_uri_mismatch`.
++    # Never guess: stay "unknown" until the user tells us.
++    declared = setting("GOOGLE_OAUTH_CLIENT_TYPE").strip().lower()
++    if not declared and CLIENT_TYPE_FILE.is_file():
++        declared = CLIENT_TYPE_FILE.read_text(encoding="utf-8").strip().lower()
++    if declared in {"web", "web application"}:
++        return "web"
++    if declared in {"installed", "desktop", "desktop app"}:
++        return "installed"
++    return "unknown"
++
++
++def save_client_type(kind: str) -> str:
++    """Remember 'installed' (Desktop app) or 'web' for env-file clients."""
++    kind = {"desktop": "installed"}.get(kind.strip().lower(), kind.strip().lower())
++    if kind not in {"installed", "web"}:
++        raise ConfigError("Client type must be 'desktop' or 'web'.")
++    CLIENT_TYPE_FILE.parent.mkdir(parents=True, exist_ok=True)
++    CLIENT_TYPE_FILE.write_text(kind, encoding="utf-8")
++    return kind
+ 
+ 
+ def registered_redirect_uris() -> list[str]:
+@@ -135,7 +174,8 @@
+         kind, section = found
+         client_id, client_secret = section["client_id"], section.get("client_secret", "")
+     else:
+-        kind = client_type()
++        # google-auth accepts either key; "unknown" is stopped in auth.check_redirect.
++        kind = "web" if client_type() == "web" else "installed"
+         client_id = setting("GOOGLE_OAUTH_CLIENT_ID")
+         client_secret = setting("GOOGLE_OAUTH_CLIENT_SECRET")
+     if not client_id or not client_secret:
+diff --git a/mailkeep/llm.py b/mailkeep/llm.py
+--- a/mailkeep/llm.py
++++ b/mailkeep/llm.py
+@@ -0,0 +1,102 @@
++"""Model provider presets for the OpenMinion agent (Portal, Gemini, OpenRouter).
++
++Set in `.openminion/gmail.env`:
++
++    MAILKEEP_LLM_PROVIDER=portal        # portal | gemini | openrouter
++    CORTENSOR_API_KEY=...               # or GEMINI_API_KEY / OPENROUTER_API_KEY
++    MAILKEEP_LLM_MODEL=...              # optional override
++
++Mailkeep then writes `.openminion/mailkeep-agent.json` itself, because:
++
++* OpenMinion 0.1.7 has ONE `openai` provider slot. Cortensor Portal and Gemini
++  are both "openai-compatible", so switching means rewriting that slot.
++* `config init` writes `providers` *and* `system.providers`; the second one
++  silently wins (report OM-02). The generated file has no `system` block.
++* An agent without `default_channel` fails every turn with
++  `inbound authenticity denied (reason=invalid_channel, mode=warn)`.
++* OpenMinion reads `api_key_env` from the process environment only, not from
++  gmail.env, so `export_key()` copies it over.
 +"""
 +
 +from __future__ import annotations
 +
 +import json
 +import os
-+import threading
-+import uuid
++from dataclasses import dataclass
 +from pathlib import Path
 +
-+from .assistant import HELP_TEXT
 +from .config import ROOT, setting
-+from .models import Response
-+from .session import Outcome, Session
 +
-+OPENMINION_DIR = ROOT / ".openminion"
-+
-+INSTRUCTIONS = f"""You are Mailkeep, a careful Gmail assistant running on the user's own machine.
-+You act ONLY through the `mailkeep_command` tool, which accepts exactly the
-+command grammar below. Translate the user's request into one or more commands.
-+
-+{HELP_TEXT}
-+
-+Exact command shapes (copy them; do not invent other syntax):
-+  find invoices            find emails from amazon      open 2
-+  label 1-2 as Finance     unlabel 3 from Finance       archive 1,3
-+  mark 2 read              delete 4                     restore 1-2
-+  draft a reply to 1 saying Thanks, received.
-+Rows are referenced ONLY by the "#" number of the most recent list, never by
-+message ID or subject. If the user refers to rows that are not in the most
-+recent list, run the matching `find` first, then use its numbers.
-+
-+Rules:
-+- Use as few tool calls as possible (usually one or two).
-+- Reads (find, open, labels, analyze trash) run immediately.
-+- Writes (label, unlabel, archive, restore, delete, mark read, draft) return
-+  AWAITING_APPROVAL. Then STOP calling tools and tell the user in one sentence
-+  to review the card and press Approve. Never claim a write happened.
-+- Mailkeep cannot send email. Drafts are the furthest it goes.
-+- Be brief. The UI already shows the tool's tables; do not repeat them.
-+"""
-+
-+# OpenMinion @tool handlers get no per-call context (see report), so the
-+# session a call belongs to is published here for the duration of one turn.
-+# The SDK already serialises decorated-tool turns on a global registry lock;
-+# this lock makes that explicit so the global is safe.
-+_LEAK_MARKERS = ("[CONSTRAINTS & POLICY]", "[BUDGET TELEMETRY]", "budget_envelope_status")
-+_TURN_LOCK = threading.Lock()
-+_ACTIVE: dict[str, object] = {"session": None, "outcomes": None}
++GENERATED_CONFIG = ROOT / ".openminion" / "mailkeep-agent.json"
 +
 +
-+def _build_tool():
-+    from openminion import tool
-+
-+    @tool(name="mailkeep_command", idempotent=False)
-+    def mailkeep_command(command: str) -> str:
-+        """Run one Mailkeep command (grammar in your instructions) and return its result."""
-+        session = _ACTIVE["session"]
-+        outcomes = _ACTIVE["outcomes"]
-+        if not isinstance(session, Session) or not isinstance(outcomes, list):
-+            return "ERROR: no active mailbox session."
-+        calls = _ACTIVE.setdefault("calls", 0) + 1  # type: ignore[operator]
-+        _ACTIVE["calls"] = calls
-+        if calls > 4:
-+            return "STOP: too many commands this turn. Answer the user now."
-+        if session.approval is not None:
-+            return "AWAITING_APPROVAL: a previous write is still waiting for the user."
-+        try:
-+            outcome = session.run_command(command)
-+        except Exception as exc:  # user-facing errors become tool text
-+            return f"ERROR: {exc}"
-+        outcomes.append(outcome)
-+        lines = []
-+        for response in outcome.responses:
-+            if response.text:
-+                lines.append(response.text)
-+            if response.table:
-+                lines.append(f"[table shown to user, {len(response.table.rows)} row(s)]")
-+                lines += [" | ".join(row) for row in response.table.rows[:25]]
-+        if outcome.approval:
-+            lines.append(f"AWAITING_APPROVAL: {outcome.approval.question}")
-+        return "\n".join(lines) or "(no output)"
-+
-+    return mailkeep_command
++@dataclass(frozen=True)
++class Preset:
++    key: str
++    label: str
++    slot: str  # OpenMinion provider name
++    base_url: str
++    key_env: str
++    model: str
++    timeout_seconds: int = 120
 +
 +
-+def config_path() -> Path:
-+    return Path(setting("MAILKEEP_OPENMINION_CONFIG") or OPENMINION_DIR / "agents.json")
++PRESETS: dict[str, Preset] = {
++    # Values from openminion/modules/llm/setup_catalog.py (0.1.7).
++    "portal": Preset(
++        "portal", "Cortensor Portal", "openai", "https://api.cortensor.app/v1",
++        "CORTENSOR_API_KEY", "oss-20b", timeout_seconds=480,
++    ),
++    "gemini": Preset(
++        "gemini", "Gemini", "openai",
++        "https://generativelanguage.googleapis.com/v1beta/openai/",
++        "GEMINI_API_KEY", "gemini-2.5-flash",
++    ),
++    "openrouter": Preset(
++        "openrouter", "OpenRouter", "openrouter", "https://openrouter.ai/api/v1",
++        "OPENROUTER_API_KEY", "openai/gpt-4.1-mini",
++    ),
++}
 +
 +
-+def configured_provider() -> str:
-+    path = config_path()
-+    try:
-+        data = json.loads(path.read_text(encoding="utf-8"))
-+    except (OSError, ValueError):
-+        return ""
-+    agents = data.get("agents") or {}
-+    profile = agents.get("openminion") or next(iter(agents.values()), {})
-+    return str(profile.get("provider") or "")
-+
-+
-+def resolve_mode() -> tuple[str, str]:
-+    """('openminion' | 'rules', human-readable reason)."""
-+    if setting("MAILKEEP_AGENT").lower() == "rules":
-+        return "rules", "MAILKEEP_AGENT=rules"
-+    try:
-+        import openminion  # noqa: F401
-+    except Exception:
-+        return "rules", "openminion is not installed"
-+    provider = configured_provider()
-+    if not provider:
-+        return "rules", f"no OpenMinion config at {config_path()}"
-+    if provider == "echo":
-+        return "rules", "OpenMinion provider is 'echo' (no model, no tool calls)"
-+    return "openminion", f"OpenMinion provider '{provider}'"
-+
-+
-+class MailkeepAgent:
-+    """Routes chat text to the OpenMinion agent or the rule-based parser."""
-+
-+    def __init__(self, session: Session, *, session_id: str | None = None):
-+        self.session = session
-+        # Unique per launch: replayed replies are keyed by session_id and
-+        # persist on disk across restarts (OM-01).
-+        self.session_id = session_id or f"mailkeep-{uuid.uuid4().hex[:12]}"
-+        self.mode, self.reason = resolve_mode()
-+        self._agent = None
-+        self._turn = 0
-+        self._history: list[tuple[str, str]] = []
-+
-+    def _ensure_agent(self):
-+        if self._agent is None:
-+            os.environ.setdefault("OPENMINION_HOME", str(OPENMINION_DIR))
-+            os.environ.setdefault("OPENMINION_DATA_ROOT", str(OPENMINION_DIR / "data"))
-+            from openminion import Agent
-+
-+            self._agent = Agent(
-+                name="mailkeep",
-+                instructions=INSTRUCTIONS,
-+                tools=[_build_tool()],
-+                config_path=str(config_path()),
-+                session_id=self.session_id,
-+            )
-+        return self._agent
-+
-+    def chat(self, text: str) -> Outcome:
-+        # Slash commands and answers to a pending question ("what should the
-+        # draft say?") go straight to the deterministic parser.
-+        direct = text.strip().startswith("/") or self.session.assistant.pending is not None
-+        if self.mode != "openminion" or direct:
-+            return self.session.run_command(text)
-+        return self._agent_turn(text)
-+
-+    def _agent_turn(self, text: str) -> Outcome:
-+        from openminion import ProviderError, TurnTimeoutError
-+
-+        outcomes: list[Outcome] = []
-+        reply = ""
-+        with _TURN_LOCK:
-+            _ACTIVE["session"], _ACTIVE["outcomes"], _ACTIVE["calls"] = self.session, outcomes, 0
-+            try:
-+                # WORKAROUND (see report, OM-01): openminion 0.1.7 replays the
-+                # first reply of a session for every later turn with the same
-+                # session_id. Use a fresh session per turn and carry a short
-+                # transcript ourselves; numbered refs live in Session anyway.
-+                self._turn += 1
-+                result = self._ensure_agent().run(
-+                    self._with_history(text),
-+                    session_id=f"{self.session_id}-{self._turn}",
-+                    timeout_seconds=float(setting("MAILKEEP_AGENT_TIMEOUT") or 180),
-+                    # Only our own tool may run; it gates writes itself.
-+                    approval_callback=lambda name, _args, _id: name == "mailkeep_command",
-+                )
-+                reply = result.text.strip()
-+                # The runtime prefixes replies with the agent profile name.
-+                if reply.lower().startswith("openminion:"):
-+                    reply = reply.split(":", 1)[1].strip()
-+                # OM-05: the runtime sometimes returns its own prompt
-+                # scaffolding as the reply body. Never show that to the user.
-+                if any(tag in reply for tag in _LEAK_MARKERS):
-+                    reply = (
-+                        "Please review the request above and press Approve or Cancel."
-+                        if self.session.approval else ""
-+                    )
-+            except (ProviderError, TurnTimeoutError) as exc:
-+                why = (f"Model provider failed ({exc.code}): {exc.message}"
-+                       if isinstance(exc, ProviderError) else f"Agent turn timed out ({exc})")
-+                outcomes.append(Outcome([Response(
-+                    f"{why}. Answered with the rule-based parser instead."
-+                )]))
-+                if self.session.approval is None:
-+                    outcomes.append(self.session.run_command(text))
-+            finally:
-+                _ACTIVE["session"], _ACTIVE["outcomes"] = None, None
-+        responses = [r for o in outcomes for r in o.responses]
-+        self._history = (self._history + [(text, reply[:400])])[-3:]
-+        if reply:
-+            responses.append(Response(reply))
-+        return Outcome(responses, self.session.approval)
-+
-+    def _with_history(self, text: str) -> str:
-+        if not self._history:
-+            return text
-+        lines = ["Earlier in this conversation:"]
-+        for user, bot in self._history:
-+            lines.append(f"User: {user}")
-+            if bot:
-+                lines.append(f"You: {bot}")
-+        return "\n".join(lines) + f"\n\nCurrent request: {text}"
-+
-+    def close(self) -> None:
-+        if self._agent is not None:
-+            self._agent.close()
-+            self._agent = None
-diff --git a/mailkeep/assistant.py b/mailkeep/assistant.py
-index e1d130f..9ed7629 100644
---- a/mailkeep/assistant.py
-+++ b/mailkeep/assistant.py
-@@ -34,6 +34,18 @@ class AssistantError(RuntimeError):
-     """A user-facing problem, not a crash."""
- 
- 
-+class ApprovalRequired(Exception):
-+    """Raised by a deferring ``confirm`` callback (web UI / agent tool).
-+
-+    The write has not happened. The caller shows the preview and, on
-+    approval, replays the command from ``snapshot()`` with confirmation.
-+    """
-+
-+    def __init__(self, question: str):
-+        super().__init__(question)
-+        self.question = question
-+
-+
- def _clip(value: str, width: int) -> str:
-     value = " ".join(value.split())
-     return value if len(value) <= width else value[: width - 1] + "..."
-@@ -107,6 +119,21 @@ class Assistant:
-         self.last_opened: Email | None = None
-         self.pending: dict | None = None
- 
-+    # -- state for deferred approval -------------------------------------
-+    def snapshot(self) -> dict:
-+        return {
-+            "pending": dict(self.pending) if self.pending else None,
-+            "last_results": list(self.last_results),
-+            "last_query": self.last_query,
-+            "last_opened": self.last_opened,
-+        }
-+
-+    def restore(self, state: dict) -> None:
-+        self.pending = dict(state["pending"]) if state["pending"] else None
-+        self.last_results = list(state["last_results"])
-+        self.last_query = state["last_query"]
-+        self.last_opened = state["last_opened"]
-+
-     # -- entry point ---------------------------------------------------
-     def handle(self, text: str) -> Response:
-         intent = parse_intent(text, default_limit=self.limit)
-@@ -473,6 +500,15 @@ class Assistant:
- 
-     def _mark_read(self, intent: Intent) -> Response:
-         emails = self._resolve(intent.refs)
-+        self.notify(
-+            Response(
-+                f"Mark {len(emails)} message(s) as read?",
-+                table=_table(emails),
-+                hint="Answer y to apply, anything else to cancel.",
-+            )
-+        )
-+        if not self.confirm(f"Mark {len(emails)} message(s) as read?"):
-+            return Response("Cancelled. Nothing changed.")
-         self.backend.label_messages(
-             [email.id for email in emails], remove_label_ids=["UNREAD"]
-         )
-diff --git a/mailkeep/auth.py b/mailkeep/auth.py
-index c0207eb..07b5475 100644
---- a/mailkeep/auth.py
-+++ b/mailkeep/auth.py
-@@ -1,99 +1,171 @@
--"""OAuth for a Desktop Google client, with the token kept inside the project.
-+"""Google OAuth for Mailkeep, with the token kept inside the project.
- 
--The first call opens a browser (or prints the URL when `open_browser=False`).
--After consent, refreshes are silent until the refresh token is revoked.
-+Two entry points share one token file:
-+
-+* ``load_credentials`` - console login (``python -m mailkeep login``).
-+* ``WebLogin`` - consent started from the local UI; Google redirects back to
-+  the UI server's ``/oauth/callback``.
-+
-+`Error 400: redirect_uri_mismatch` means the redirect URI sent to Google is
-+not accepted by the OAuth client: Desktop ("installed") clients accept any
-+loopback URI, Web clients only registered ones. Both paths check this up
-+front and name the exact string to register.
- """
- 
- from __future__ import annotations
- 
-+import json
-+import secrets
-+import threading
-+import time
-+import urllib.parse
-+import urllib.request
- from pathlib import Path
- 
- from .config import (
-+    SCOPES,
-     TOKEN_DIR,
-     TOKEN_FILE,
-     AuthRequired,
-+    ConfigError,
-     client_config,
-+    client_type,
-     has_client_credentials,
-     has_token,
-     oauth_port,
-     redirect_uri,
-+    registered_redirect_uris,
-+    setting,
- )
- 
- 
- def save_credentials(credentials) -> None:
-     TOKEN_DIR.mkdir(parents=True, exist_ok=True)
-     TOKEN_FILE.write_text(credentials.to_json(), encoding="utf-8")
-+    try:
-+        TOKEN_FILE.chmod(0o600)
-+    except OSError:
-+        pass
-+
-+
-+def check_redirect(uri: str) -> None:
-+    """Fail here, not on Google's error page, for unregistered Web-client URIs."""
-+    if client_type() != "web":
-+        return
-+    registered = registered_redirect_uris()
-+    if uri not in registered:
-+        raise ConfigError(
-+            "Your OAuth client is a 'Web application' and does not list the redirect "
-+            f"URI {uri!r} (registered: {', '.join(registered) or 'none'}). Add it under "
-+            "Google Cloud Console -> Credentials -> your client -> Authorized redirect "
-+            "URIs, or create a 'Desktop app' client instead (no registration needed)."
-+        )
- 
- 
--def load_credentials(interactive: bool = True, open_browser: bool = True):
--    """Return valid credentials, refreshing or running the consent flow."""
-+def cached_credentials():
-+    """Valid cached credentials (refreshed if needed), or None."""
-+    if not has_token():
++def selected() -> Preset | None:
++    """The configured preset, or None when the user did not pick one."""
++    key = setting("MAILKEEP_LLM_PROVIDER").strip().lower()
++    if not key:
 +        return None
-     from google.auth.transport.requests import Request
-     from google.oauth2.credentials import Credentials
--    from google_auth_oauthlib.flow import InstalledAppFlow
- 
--    from .config import SCOPES
--
--    credentials = None
--    if has_token():
-+    try:
-+        credentials = Credentials.from_authorized_user_file(str(TOKEN_FILE), list(SCOPES))
-+    except Exception:
-+        return None
-+    if credentials.expired:
-+        if not credentials.refresh_token:
-+            return None
-         try:
--            credentials = Credentials.from_authorized_user_file(
--                str(TOKEN_FILE), list(SCOPES)
--            )
-+            credentials.refresh(Request())
-         except Exception:
--            credentials = None
--
--        if credentials is not None and credentials.expired:
--            if credentials.refresh_token:
--                try:
--                    credentials.refresh(Request())
--                except Exception:
--                    credentials = None
--            else:
--                credentials = None
-+            return None
-+        save_credentials(credentials)  # was never persisted before -> refresh every run
-+    return credentials if credentials.valid else None
- 
--        if credentials is not None and credentials.valid:
--            return credentials
- 
-+def load_credentials(interactive: bool = True, open_browser: bool = True):
-+    """Return valid credentials, refreshing or running the console consent flow."""
-+    credentials = cached_credentials()
-+    if credentials is not None:
-+        return credentials
-     if not interactive:
--        raise AuthRequired(
--            "No usable Gmail token. Run `python -m mailkeep login` first."
--        )
--
-+        raise AuthRequired("No usable Gmail token. Run `python -m mailkeep ui` or `login`.")
-     if not has_client_credentials():
-         raise AuthRequired(
--            "OAuth client credentials are missing from .openminion/gmail.env "
--            "or scripts/gmail.env."
-+            "OAuth client is missing (.openminion/client_secret.json or .openminion/gmail.env)."
-         )
- 
-+    from google_auth_oauthlib.flow import InstalledAppFlow
++    if key not in PRESETS:
++        raise ValueError(f"MAILKEEP_LLM_PROVIDER={key!r}; use one of {', '.join(PRESETS)}")
++    return PRESETS[key]
 +
-+    # Desktop clients take any loopback port, so let the OS pick a free one
-+    # (the old pinned 8080 collides with dev servers). Web clients need the
-+    # pinned, registered port.
-+    pinned = client_type() == "web" or bool(setting("MAILKEEP_OAUTH_PORT"))
-+    port = oauth_port() if pinned else 0
-+    if pinned:
-+        check_redirect(redirect_uri(port))
-     flow = InstalledAppFlow.from_client_config(client_config(), list(SCOPES))
--    port = oauth_port()
-     if open_browser:
-         print("Opening the Google consent page in your browser...")
--    print(f"OAuth redirect URI: {redirect_uri(port)}")
--    print(
--        "If Google shows 'Error 400: redirect_uri_mismatch', add exactly that "
--        "URI to the OAuth client's Authorized redirect URIs."
--    )
-     try:
-         credentials = flow.run_local_server(
-             port=port,
-             open_browser=open_browser,
--            authorization_prompt_message=(
--                "Open this URL to authorize Mailkeep:\n{url}\n"
--            ),
-+            authorization_prompt_message="Open this URL to authorize Mailkeep:\n{url}\n",
-             success_message="Mailkeep is authorized. You can close this tab.",
-         )
-     except OSError as exc:
-         raise AuthRequired(
--            f"Could not bind the OAuth callback port {port} ({exc}). "
--            f"Set MAILKEEP_OAUTH_PORT to a free port and register "
--            f"http://localhost:<port>/ as an authorized redirect URI."
-+            f"Could not bind OAuth callback port {port} ({exc}). Set MAILKEEP_OAUTH_PORT."
-         ) from exc
-     save_credentials(credentials)
-     print(f"Token saved to {TOKEN_FILE}")
-     return credentials
- 
- 
-+class WebLogin:
-+    """Consent flow driven by the local UI, keyed by an unguessable state."""
 +
-+    TTL_SECONDS = 600
-+
-+    def __init__(self, redirect: str):
-+        self.redirect = redirect
-+        self._lock = threading.Lock()
-+        self._pending: dict[str, tuple[object, float]] = {}
-+
-+    def start(self) -> str:
-+        from google_auth_oauthlib.flow import Flow
-+
-+        check_redirect(self.redirect)
-+        flow = Flow.from_client_config(
-+            client_config(self.redirect), scopes=list(SCOPES), redirect_uri=self.redirect
-+        )
-+        state = secrets.token_urlsafe(24)
-+        url, _ = flow.authorization_url(
-+            access_type="offline", prompt="consent", include_granted_scopes="true", state=state
-+        )
-+        with self._lock:
-+            now = time.monotonic()
-+            self._pending = {
-+                k: v for k, v in self._pending.items() if now - v[1] < self.TTL_SECONDS
++def build_config(preset: Preset) -> dict:
++    return {
++        "agents": {
++            "openminion": {
++                "name": "openminion",
++                "provider": preset.slot,
++                "default_channel": "console",
 +            }
-+            self._pending[state] = (flow, now)
-+        return url
-+
-+    def finish(self, state: str, code: str):
-+        with self._lock:
-+            entry = self._pending.pop(state, None)
-+        if entry is None or time.monotonic() - entry[1] > self.TTL_SECONDS:
-+            raise AuthRequired("This sign-in link expired or was not started here. Try again.")
-+        flow = entry[0]
-+        # code= (not the callback URL) avoids oauthlib's https-only check on
-+        # the http://localhost callback; PKCE verifier stays on the flow.
-+        flow.fetch_token(code=code)
-+        save_credentials(flow.credentials)
-+        return flow.credentials
++        },
++        "providers": {
++            preset.slot: {
++                "model": setting("MAILKEEP_LLM_MODEL") or preset.model,
++                "base_url": preset.base_url,
++                "api_key_env": preset.key_env,
++                "timeout_seconds": preset.timeout_seconds,
++            }
++        },
++    }
 +
 +
- def token_state() -> dict[str, object]:
-     return {
-         "client_credentials": has_client_credentials(),
-@@ -104,7 +176,15 @@ def token_state() -> dict[str, object]:
- 
- 
- def forget_token(path: Path = TOKEN_FILE) -> bool:
--    if path.is_file():
--        path.unlink()
--        return True
--    return False
-+    """Revoke the grant at Google (best effort) and delete the local token."""
-+    if not path.is_file():
-+        return False
-+    try:
-+        token = json.loads(path.read_text(encoding="utf-8")).get("refresh_token")
-+        if token:
-+            data = urllib.parse.urlencode({"token": token}).encode()
-+            urllib.request.urlopen("https://oauth2.googleapis.com/revoke", data=data, timeout=10).close()
-+    except Exception:
-+        pass
-+    path.unlink()
-+    return True
-diff --git a/mailkeep/config.py b/mailkeep/config.py
-index 08b8612..f97453b 100644
---- a/mailkeep/config.py
-+++ b/mailkeep/config.py
-@@ -6,6 +6,7 @@ prints a secret value, and the token cache stays inside the project.
- 
- from __future__ import annotations
- 
-+import json
- import os
- from pathlib import Path
- 
-@@ -16,6 +17,10 @@ ENV_FILE = ROOT / ".openminion" / "gmail.env"
- FALLBACK_ENV_FILE = ROOT / "scripts" / "gmail.env"
- TOKEN_DIR = ROOT / ".openminion" / "gmail" / "credentials"
- TOKEN_FILE = TOKEN_DIR / "mailkeep-token.json"
-+# Client JSON downloaded from Google Cloud Console. Its top-level key
-+# ("installed" = Desktop app, "web") decides whether the redirect URI
-+# must be registered.
-+CLIENT_SECRET_FILE = ROOT / ".openminion" / "client_secret.json"
- 
- # `gmail.modify` covers reading, labels, trash and read state.
- # `gmail.compose` covers drafts. Mailkeep never calls messages.send().
-@@ -88,38 +93,118 @@ def setting(name: str) -> str:
-     return load_env_file(FALLBACK_ENV_FILE).get(name, "").strip()
- 
- 
--def client_config() -> dict:
--    """Return a google-auth client config dict for the OAuth client.
--
--    The declared redirect URI must match what `run_local_server` actually
--    sends, otherwise Google rejects the request with
--    `Error 400: redirect_uri_mismatch`.
-+def _client_file_section() -> tuple[str, dict] | None:
-+    """Return ("installed"|"web", section) from the downloaded client JSON."""
-+    path = Path(setting("MAILKEEP_CLIENT_SECRET_FILE") or CLIENT_SECRET_FILE)
-+    if not path.is_file():
-+        return None
-+    try:
-+        data = json.loads(path.read_text(encoding="utf-8"))
-+    except (OSError, ValueError) as exc:
-+        raise ConfigError(f"{path} is not a valid Google client JSON: {exc}") from exc
-+    for kind in ("installed", "web"):
-+        section = data.get(kind)
-+        if isinstance(section, dict) and section.get("client_id"):
-+            return kind, section
-+    raise ConfigError(f"{path} has neither an 'installed' nor a 'web' client.")
++def export_key(preset: Preset) -> bool:
++    value = setting(preset.key_env)
++    if value:
++        os.environ.setdefault(preset.key_env, value)
++    return bool(value)
 +
 +
-+def client_type() -> str:
-+    """'installed' (Desktop app) or 'web'. Env-file clients default to Desktop.
-+
-+    Google accepts an unregistered loopback redirect only for Desktop clients.
-+    A Web client must list the exact redirect URI; sending any other URI is
-+    what produces `Error 400: redirect_uri_mismatch`.
-     """
--    client_id = setting("GOOGLE_OAUTH_CLIENT_ID")
--    client_secret = setting("GOOGLE_OAUTH_CLIENT_SECRET")
-+    found = _client_file_section()
-+    if found:
-+        return found[0]
-+    return "web" if setting("GOOGLE_OAUTH_CLIENT_TYPE").lower() == "web" else "installed"
-+
-+
-+def registered_redirect_uris() -> list[str]:
-+    found = _client_file_section()
-+    return [str(u) for u in (found[1].get("redirect_uris") or [])] if found else []
-+
-+
-+def client_config(redirect: str | None = None) -> dict:
-+    """google-auth client config whose declared redirect equals the one sent."""
-+    redirect = redirect or redirect_uri()
-+    found = _client_file_section()
-+    if found:
-+        kind, section = found
-+        client_id, client_secret = section["client_id"], section.get("client_secret", "")
-+    else:
-+        kind = client_type()
-+        client_id = setting("GOOGLE_OAUTH_CLIENT_ID")
-+        client_secret = setting("GOOGLE_OAUTH_CLIENT_SECRET")
-     if not client_id or not client_secret:
-         raise ConfigError(
--            "GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET are missing. "
--            f"Add them to {ENV_FILE} or {FALLBACK_ENV_FILE} "
--            "(template: scripts/gmail.env.example)."
-+            "No Google OAuth client configured. Put the downloaded client JSON at "
-+            f"{CLIENT_SECRET_FILE} (or paste it in the UI), or set "
-+            f"GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET in {ENV_FILE}."
-         )
-     return {
--        "installed": {
-+        kind: {
-             "client_id": client_id,
-             "client_secret": client_secret,
-             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-             "token_uri": "https://oauth2.googleapis.com/token",
-             "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
--            "redirect_uris": [redirect_uri()],
-+            "redirect_uris": [redirect],
-         }
++def write_config(preset: Preset, path: Path = GENERATED_CONFIG) -> Path:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(json.dumps(build_config(preset), indent=2), encoding="utf-8")
++    return path
+diff --git a/mailkeep/static/index.html b/mailkeep/static/index.html
+--- a/mailkeep/static/index.html
++++ b/mailkeep/static/index.html
+@@ -173,10 +173,30 @@
+     box.append(ta, save, err);
+   } else {
+     box.append(el("p", "", "Step 2. Google will ask you to allow Mailkeep to read, label and trash mail and to create drafts. It cannot send mail. Your token stays on this computer."));
++    if (st.client_type === "unknown") {
++      // Only ID + secret are known (gmail.env). Guessing "Desktop" here is what
++      // produced Google's "Error 400: redirect_uri_mismatch" for Web clients.
++      box.append(el("p", "", "Which kind of OAuth client did you create? Google Cloud Console → Credentials shows it in the 'Type' column."));
++      const pick = el("div", "row");
++      for (const [type, label] of [["desktop", "Desktop app"], ["web", "Web application"]]) {
++        const b = el("button", type === "desktop" ? "primary" : "", label);
++        b.onclick = async () => {
++          try { await api("/api/client-type", { type }); refresh(); } catch (e) { err.textContent = e.message; }
++        };
++        pick.append(b);
++      }
++      box.append(pick, err);
++      log.append(box);
++      return;
++    }
+     if (st.client_type === "web") {
+-      const p = el("p", "muted", "Your client is a Web application, so its Authorized redirect URIs must contain exactly ");
+-      p.append(el("code", "", st.redirect_uri)); box.append(p);
++      const p = el("p", "muted", "Your client is a Web application. Before signing in, add this exact line under Authorized redirect URIs and press Save (Google can take a few minutes to apply it): ");
++      const copy = el("button", "", "Copy");
++      copy.onclick = () => navigator.clipboard && navigator.clipboard.writeText(st.redirect_uri);
++      p.append(el("code", "", st.redirect_uri), " ", copy); box.append(p);
++      box.append(el("p", "muted", "localhost and 127.0.0.1 are different to Google, and so is a trailing slash."));
      }
++    box.append(el("p", "muted", "If Google says 'Access blocked', add your Gmail address under Google Auth Platform → Audience → Test users."));
+     const go = el("button", "primary", "Sign in with Google");
+     go.onclick = async () => {
+       const popup = window.open("", "mailkeep-oauth", "width=520,height=680");
+diff --git a/mailkeep/web.py b/mailkeep/web.py
+--- a/mailkeep/web.py
++++ b/mailkeep/web.py
+@@ -26,7 +26,14 @@
  
- 
-+def save_client_file(raw: str) -> str:
-+    """Validate and store a client JSON pasted into the UI. Returns its type."""
-+    try:
-+        data = json.loads(raw)
-+    except ValueError as exc:
-+        raise ConfigError(f"That is not JSON: {exc}") from exc
-+    kind = next((k for k in ("installed", "web") if isinstance(data.get(k), dict)), "")
-+    if not kind or not data[kind].get("client_id") or not data[kind].get("client_secret"):
-+        raise ConfigError(
-+            "Expected the JSON downloaded from Google Cloud Console (an 'installed' "
-+            "or 'web' object with client_id and client_secret)."
-+        )
-+    CLIENT_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
-+    CLIENT_SECRET_FILE.write_text(json.dumps(data), encoding="utf-8")
-+    try:
-+        os.chmod(CLIENT_SECRET_FILE, 0o600)
-+    except OSError:
-+        pass
-+    return kind
-+
-+
- def has_client_credentials() -> bool:
-+    try:
-+        if _client_file_section():
-+            return True
-+    except ConfigError:
-+        return False
-     return bool(
-         setting("GOOGLE_OAUTH_CLIENT_ID") and setting("GOOGLE_OAUTH_CLIENT_SECRET")
-     )
- 
- 
-+# Local web UI. Google redirects back to the UI server itself. Desktop
-+# clients accept this unregistered; Web clients must register it exactly.
-+DEFAULT_UI_PORT = 8765
-+
-+
-+def ui_port() -> int:
-+    raw = setting("MAILKEEP_UI_PORT")
-+    try:
-+        port = int(raw) if raw else DEFAULT_UI_PORT
-+    except ValueError:
-+        return DEFAULT_UI_PORT
-+    return port if 1 <= port <= 65535 else DEFAULT_UI_PORT
-+
-+
-+def ui_redirect_uri(port: int | None = None) -> str:
-+    return f"http://localhost:{port or ui_port()}/oauth/callback"
-+
-+
- def has_token() -> bool:
-     return TOKEN_FILE.is_file()
-diff --git a/mailkeep/console.py b/mailkeep/console.py
-index 95a4a20..ad56f4e 100644
---- a/mailkeep/console.py
-+++ b/mailkeep/console.py
-@@ -13,7 +13,13 @@ from rich.text import Text
- 
- from .assistant import HELP_TEXT, Assistant, AssistantError
- from .auth import load_credentials, token_state
--from .config import AuthRequired, ConfigError, has_client_credentials, redirect_uri
+ from .agent import MailkeepAgent
+ from .auth import WebLogin, cached_credentials, forget_token
+-from .config import ConfigError, client_type, has_client_credentials, save_client_file, ui_redirect_uri
 +from .config import (
-+    AuthRequired,
 +    ConfigError,
 +    client_type,
 +    has_client_credentials,
++    save_client_file,
++    save_client_type,
 +    ui_redirect_uri,
 +)
  from .demo import DemoGmailClient
- from .gmail import GmailClient, build_client
- from .intents import parse_intent
-@@ -106,7 +112,9 @@ def _once(console: Console, backend, limit: int, text: str, *, yes: bool) -> int
- def _status(console: Console) -> int:
-     state = token_state()
-     console.print(Text(f"OAuth client configured: {state['client_credentials']}"))
--    console.print(Text(f"OAuth redirect URI: {redirect_uri()}"))
-+    if state["client_credentials"]:
-+        console.print(Text(f"OAuth client type: {client_type()}"))
-+    console.print(Text(f"UI redirect URI: {ui_redirect_uri()}"))
-     console.print(Text(f"Token file: {state['token_file']}"))
-     console.print(Text(f"Token present: {state['token_present']}"))
-     if not state["client_credentials"]:
-@@ -154,8 +162,8 @@ def main(argv: list[str] | None = None) -> int:
-         "command",
-         nargs="?",
-         default="chat",
--        choices=["chat", "login", "status"],
--        help="chat (default), login, or status",
-+        choices=["chat", "ui", "login", "status", "logout"],
-+        help="chat (default), ui (local window), login, status, logout",
-     )
-     parser.add_argument("--demo", action="store_true", help="use in-memory demo mail")
-     parser.add_argument("--limit", type=int, default=20, help="max search results")
-@@ -163,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
-         "--no-browser", action="store_true", help="print the consent URL instead of opening a browser"
-     )
-     parser.add_argument("--once", default="", help="run one command and exit")
-+    parser.add_argument("--port", type=int, default=0, help="ui: local port (default 8765)")
-     parser.add_argument(
-         "--yes",
-         action="store_true",
-@@ -174,6 +183,21 @@ def main(argv: list[str] | None = None) -> int:
+ from .session import Outcome, Session
  
-     if args.command == "status":
-         return _status(console)
-+    if args.command == "logout":
-+        from .auth import forget_token
+@@ -146,7 +153,11 @@
+             error = (query.get("error") or [""])[0]
+             message = "Gmail connected. You can close this window."
+             if error:
+-                message = f"Google did not grant access ({error}). Nothing was connected."
++                from .auth import CONSENT_ERRORS
 +
-+        console.print(Text("Token removed." if forget_token() else "No token stored."))
-+        return 0
-+    if args.command == "ui":
-+        from .config import ui_port
-+        from .web import serve
++                message = CONSENT_ERRORS.get(
++                    error, f"Google did not grant access ({error}). Nothing was connected."
++                )
+             else:
+                 try:
+                     credentials = app.login.finish(
+@@ -179,6 +190,8 @@
+             try:
+                 if route == "/api/client":
+                     return self._json(200, {"client_type": save_client_file(str(body.get("json", "")))})
++                if route == "/api/client-type":
++                    return self._json(200, {"client_type": save_client_type(str(body.get("type", "")))})
+                 if route == "/api/login":
+                     return self._json(200, {"url": app.login.start()})
+                 if route == "/api/logout":
+diff --git a/scripts/gmail.env.example b/scripts/gmail.env.example
+--- a/scripts/gmail.env.example
++++ b/scripts/gmail.env.example
+@@ -9,3 +9,16 @@
+ # Optional overrides
+ # WORKSPACE_MCP_PORT=8001
+ # WORKSPACE_MCP_CREDENTIALS_DIR=C:/path/inside/this/project/.openminion/gmail/credentials
 +
-+        return serve(
-+            demo=args.demo,
-+            limit=limit,
-+            port=args.port or ui_port(),
-+            open_browser=not args.no_browser,
-+        )
-     if args.command == "login":
-         return _login(console, open_browser=not args.no_browser)
- 
-diff --git a/mailkeep/gmail.py b/mailkeep/gmail.py
-index 4a8c3ab..a7058ae 100644
---- a/mailkeep/gmail.py
-+++ b/mailkeep/gmail.py
-@@ -379,11 +379,12 @@ class GmailClient:
-         )
- 
- 
--def build_client() -> GmailClient:
-+def build_client(credentials=None) -> GmailClient:
-     from googleapiclient.discovery import build
- 
--    from .auth import load_credentials
-+    if credentials is None:
-+        from .auth import load_credentials
- 
--    credentials = load_credentials(interactive=True)
-+        credentials = load_credentials(interactive=True)
-     service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
-     return GmailClient(service)
-diff --git a/mailkeep/session.py b/mailkeep/session.py
-new file mode 100644
-index 0000000..0ec3a1c
---- /dev/null
-+++ b/mailkeep/session.py
-@@ -0,0 +1,104 @@
-+"""One mailbox conversation with deferred, ID-checked approvals.
++# --- Google OAuth client type -------------------------------------------
++# Mailkeep cannot tell Desktop from Web by the client ID. Set it here, pick it
++# in the UI, or paste the downloaded client JSON instead of the two lines above.
++# GOOGLE_OAUTH_CLIENT_TYPE=desktop     # desktop | web
++# For "web" clients register exactly: http://localhost:8765/oauth/callback
 +
-+Shared by the web UI and the OpenMinion agent tool. Every mailbox write goes
-+through ``Assistant``; here its ``confirm`` callback raises ``ApprovalRequired``
-+so nothing is written until the user presses Approve. Approval replays the
-+same command from the pre-command snapshot and proceeds only when the message
-+IDs in the fresh preview equal the IDs the user reviewed.
-+"""
++# --- AI agent (OpenMinion) ----------------------------------------------
++# MAILKEEP_LLM_PROVIDER=portal          # portal | gemini | openrouter
++# CORTENSOR_API_KEY=
++# GEMINI_API_KEY=
++# OPENROUTER_API_KEY=
++# MAILKEEP_LLM_MODEL=                   # optional override
+diff --git a/scripts/start_gmail_mcp.py b/scripts/start_gmail_mcp.py
+--- a/scripts/start_gmail_mcp.py
++++ b/scripts/start_gmail_mcp.py
+@@ -76,7 +76,10 @@
+         "streamable-http",
+         "--single-user",
+         "--permissions",
+-        "gmail:full",
++        # Must equal mailkeep.config.MCP_GMAIL_PERMISSION. The old "full"
++        # level added gmail.send + settings.basic, which the Mailkeep token
++        # never holds, so workspace-mcp asked for a second consent.
++        "gmail:drafts",
+         # Mailkeep never sends mail: drafts are the product boundary. Removing
+         # the tool server-side means the model cannot send even by mistake.
+         "--disabled-tools",
+diff --git a/tests/test_fixes.py b/tests/test_fixes.py
+--- a/tests/test_fixes.py
++++ b/tests/test_fixes.py
+@@ -0,0 +1,109 @@
++"""Sign-in, shared MCP token and model provider fixes (no network)."""
 +
 +from __future__ import annotations
 +
-+import secrets
-+import threading
-+from dataclasses import dataclass, field
-+
-+from .assistant import ApprovalRequired, Assistant
-+from .models import Response
-+
-+
-+def _preview_ids(previews: list[Response]) -> list[list[str]]:
-+    return [
-+        [row[-1] for row in r.table.rows]
-+        for r in previews
-+        if r.table and r.table.columns and r.table.columns[-1] == "ID"
-+    ]
-+
-+
-+@dataclass
-+class Approval:
-+    id: str
-+    command: str
-+    question: str
-+    snapshot: dict
-+    previews: list[Response] = field(default_factory=list)
-+
-+    def public(self) -> dict:
-+        return {"id": self.id, "question": self.question, "command": self.command}
-+
-+
-+@dataclass
-+class Outcome:
-+    responses: list[Response]
-+    approval: Approval | None = None
-+
-+
-+class Session:
-+    def __init__(self, backend, *, limit: int = 20):
-+        self.backend = backend
-+        self.assistant = Assistant(backend, limit=limit)
-+        self.approval: Approval | None = None
-+        self.lock = threading.RLock()
-+
-+    def run_command(self, text: str) -> Outcome:
-+        """Run one Mailkeep command. Writes stop at a pending approval."""
-+        with self.lock:
-+            snapshot = self.assistant.snapshot()
-+            previews: list[Response] = []
-+
-+            def defer(question: str) -> bool:
-+                raise ApprovalRequired(question)
-+
-+            self.assistant.notify = previews.append
-+            self.assistant.confirm = defer
-+            try:
-+                response = self.assistant.handle(text)
-+            except ApprovalRequired as pending:
-+                self.approval = Approval(
-+                    id=secrets.token_hex(8),
-+                    command=text,
-+                    question=pending.question,
-+                    snapshot=snapshot,
-+                    previews=previews,
-+                )
-+                return Outcome(previews, self.approval)
-+            return Outcome(previews + [response])
-+
-+    def resolve(self, approval_id: str, approve: bool) -> Outcome:
-+        with self.lock:
-+            approval = self.approval
-+            if approval is None or approval.id != approval_id:
-+                return Outcome([Response("That approval is no longer pending. Nothing changed.")])
-+            self.approval = None
-+            self.assistant.restore(approval.snapshot)
-+            if not approve:
-+                self.assistant.pending = None
-+                return Outcome([Response("Cancelled. Nothing changed.")])
-+
-+            fresh: list[Response] = []
-+            expected = _preview_ids(approval.previews)
-+
-+            def confirm(question: str) -> bool:
-+                # The mailbox may change between preview and approval (e.g.
-+                # "label all newsletters" re-searches). Refuse in that case.
-+                return question == approval.question and _preview_ids(fresh) == expected
-+
-+            self.assistant.notify = fresh.append
-+            self.assistant.confirm = confirm
-+            response = self.assistant.handle(approval.command)
-+            if _preview_ids(fresh) != expected:
-+                response = Response(
-+                    "The matching messages changed since you reviewed them, so nothing was "
-+                    "changed. Run the command again to see the new preview."
-+                )
-+            return Outcome([response])
-diff --git a/mailkeep/static/index.html b/mailkeep/static/index.html
-new file mode 100644
-index 0000000..7a495d1
---- /dev/null
-+++ b/mailkeep/static/index.html
-@@ -0,0 +1,213 @@
-+<!doctype html>
-+<html lang="en">
-+<head>
-+<meta charset="utf-8">
-+<meta name="viewport" content="width=device-width, initial-scale=1">
-+<title>Mailkeep</title>
-+<style>
-+  :root {
-+    --bg: #0f1115; --surface: #171a21; --raised: #1f232c; --border: #2a2f3a;
-+    --fg: #e7e9ee; --muted: #8b93a3; --primary: #e0a458; --primary-fg: #1a1206;
-+    --ok: #5fbf8f; --danger: #e5675f; --radius: 14px;
-+    --font: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-+    --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
-+  }
-+  * { box-sizing: border-box; }
-+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 15px/1.5 var(--font); }
-+  .app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; max-width: 980px; margin: 0 auto; }
-+  header { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--border); }
-+  .logo { font-weight: 700; } .logo span { color: var(--primary); }
-+  .chip { font: 12px var(--mono); color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
-+  .chip.ok { color: var(--ok); }
-+  .spacer { flex: 1; }
-+  button { font: inherit; border-radius: 10px; border: 1px solid var(--border); background: var(--raised); color: var(--fg); padding: 8px 14px; cursor: pointer; }
-+  button:hover { border-color: var(--muted); }
-+  button.primary { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); font-weight: 600; }
-+  button.danger { color: var(--danger); }
-+  button:disabled { opacity: .5; cursor: not-allowed; }
-+  main { overflow-y: auto; padding: 24px 20px; display: flex; flex-direction: column; gap: 14px; }
-+  .msg { max-width: 88%; padding: 10px 14px; border-radius: var(--radius); white-space: pre-wrap; overflow-wrap: anywhere; }
-+  .msg.user { align-self: flex-end; background: var(--primary); color: var(--primary-fg); border-bottom-right-radius: 4px; }
-+  .msg.bot { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
-+  .msg.error { border-color: var(--danger); color: var(--danger); }
-+  .hint { color: var(--muted); font-size: 13px; margin-top: 6px; }
-+  table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 13px; white-space: normal; }
-+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
-+  th { color: var(--muted); font-weight: 500; }
-+  td.id { font: 11px var(--mono); color: var(--muted); }
-+  .card { background: var(--raised); border: 1px solid var(--primary); border-radius: var(--radius); padding: 14px; }
-+  .card h3 { margin: 0 0 4px; font-size: 14px; color: var(--primary); }
-+  .row { display: flex; gap: 8px; margin-top: 12px; }
-+  .thinking { color: var(--muted); font-size: 13px; }
-+  .thinking::after { content: " …"; animation: blink 1s infinite; }
-+  @keyframes blink { 50% { opacity: .2; } }
-+  footer { padding: 12px 20px 20px; border-top: 1px solid var(--border); }
-+  form { display: flex; gap: 10px; }
-+  textarea { flex: 1; resize: none; height: 46px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); font: inherit; }
-+  textarea:focus { outline: none; border-color: var(--primary); }
-+  .suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-+  .suggest button { font-size: 12px; padding: 4px 10px; border-radius: 999px; color: var(--muted); }
-+  .setup { margin: auto; max-width: 580px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
-+  .setup h2 { margin-top: 0; }
-+  .setup textarea { width: 100%; height: 120px; margin: 8px 0; font: 12px var(--mono); }
-+  code { font-family: var(--mono); background: var(--raised); padding: 2px 6px; border-radius: 6px; font-size: 13px; }
-+  .muted { color: var(--muted); font-size: 13px; }
-+</style>
-+</head>
-+<body>
-+<div class="app">
-+  <header>
-+    <div class="logo">mail<span>keep</span></div>
-+    <div id="account" class="chip">not connected</div>
-+    <div id="mode" class="chip" hidden></div>
-+    <div class="spacer"></div>
-+    <button id="logout" class="danger" hidden>Disconnect</button>
-+  </header>
-+  <main id="log"></main>
-+  <footer id="composer" hidden>
-+    <div class="suggest" id="suggest"></div>
-+    <form id="form">
-+      <textarea id="input" placeholder="Ask about your mail, e.g. find invoices from last month"></textarea>
-+      <button class="primary" id="send" type="submit">Send</button>
-+    </form>
-+  </footer>
-+</div>
-+<script>
-+const TOKEN = "__TOKEN__";
-+const $ = (id) => document.getElementById(id);
-+const log = $("log");
-+let busy = false;
-+
-+async function api(path, body) {
-+  const res = await fetch(path, {
-+    method: body === undefined ? "GET" : "POST",
-+    headers: { "Content-Type": "application/json", "X-Mailkeep-Token": TOKEN },
-+    body: body === undefined ? undefined : JSON.stringify(body),
-+  });
-+  const data = await res.json().catch(() => ({ error: "Bad response from Mailkeep" }));
-+  if (!res.ok) throw new Error(data.error || res.statusText);
-+  return data;
-+}
-+function el(tag, cls, text) {
-+  const n = document.createElement(tag);
-+  if (cls) n.className = cls;
-+  if (text !== undefined) n.textContent = text;   // textContent only: no HTML injection from mail
-+  return n;
-+}
-+const scroll = () => { log.scrollTop = log.scrollHeight; };
-+
-+function addUser(text) { log.append(el("div", "msg user", text)); scroll(); }
-+function addBot(m, isError) {
-+  const box = el("div", "msg bot" + (isError ? " error" : ""));
-+  if (m.text) box.append(document.createTextNode(m.text));
-+  if (m.table) {
-+    const t = el("table"), head = el("tr");
-+    m.table.columns.forEach((c) => head.append(el("th", "", c)));
-+    t.append(head);
-+    m.table.rows.forEach((r) => {
-+      const tr = el("tr");
-+      r.forEach((v, i) => tr.append(el("td", m.table.columns[i] === "ID" ? "id" : "", v)));
-+      t.append(tr);
-+    });
-+    box.append(t);
-+  }
-+  if (m.hint) box.append(el("div", "hint", m.hint.replace(/Answer y[^.]*\./, "Use the buttons below.")));
-+  log.append(box); scroll();
-+}
-+function addApproval(a) {
-+  const card = el("div", "card");
-+  card.append(el("h3", "", "Needs your approval"), el("div", "", a.question),
-+              el("div", "muted", "Nothing has changed in Gmail yet. Mailkeep never sends mail."));
-+  const row = el("div", "row"), yes = el("button", "primary", "Approve"), no = el("button", "", "Cancel");
-+  const done = async (approve) => {
-+    yes.disabled = no.disabled = true;
-+    await run(() => api("/api/approve", { id: a.id, approve }));
-+    card.remove();
-+  };
-+  yes.onclick = () => done(true); no.onclick = () => done(false);
-+  row.append(yes, no); card.append(row); log.append(card); scroll();
-+}
-+async function run(call) {
-+  busy = true; $("send").disabled = true;
-+  const thinking = el("div", "thinking", "Working"); log.append(thinking); scroll();
-+  try {
-+    const out = await call();
-+    thinking.remove();
-+    out.messages.forEach((m) => addBot(m));
-+    if (out.approval) addApproval(out.approval);
-+  } catch (e) { thinking.remove(); addBot({ text: e.message }, true); }
-+  busy = false; $("send").disabled = false; $("input").focus();
-+}
-+$("form").onsubmit = (e) => {
-+  e.preventDefault();
-+  const text = $("input").value.trim();
-+  if (!text || busy) return;
-+  $("input").value = ""; addUser(text);
-+  run(() => api("/api/chat", { text }));
-+};
-+$("input").onkeydown = (e) => {
-+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); }
-+};
-+["find unread emails", "find invoices from last month", "analyze trash", "labels", "help"].forEach((s) => {
-+  const b = el("button", "", s); b.type = "button";
-+  b.onclick = () => { if (!busy) { $("input").value = s; $("form").requestSubmit(); } };
-+  $("suggest").append(b);
-+});
-+$("logout").onclick = async () => {
-+  if (!confirm("Disconnect Gmail and delete the local token?")) return;
-+  await api("/api/logout", {}); log.innerHTML = ""; refresh();
-+};
-+
-+function setupScreen(st) {
-+  log.innerHTML = "";
-+  const box = el("div", "setup");
-+  box.append(el("h2", "", "Connect your Gmail"));
-+  const err = el("p", "muted");
-+  if (!st.client_configured) {
-+    box.append(el("p", "", "Step 1. In Google Cloud Console enable the Gmail API, then Credentials → Create credentials → OAuth client ID → Desktop app → Download JSON. Paste the file contents here. It is stored only on this computer."));
-+    const ta = el("textarea"); ta.placeholder = '{"installed": {"client_id": "...", "client_secret": "..."}}';
-+    const save = el("button", "primary", "Save client");
-+    save.onclick = async () => {
-+      try { await api("/api/client", { json: ta.value }); refresh(); } catch (e) { err.textContent = e.message; }
-+    };
-+    box.append(ta, save, err);
-+  } else {
-+    box.append(el("p", "", "Step 2. Google will ask you to allow Mailkeep to read, label and trash mail and to create drafts. It cannot send mail. Your token stays on this computer."));
-+    if (st.client_type === "web") {
-+      const p = el("p", "muted", "Your client is a Web application, so its Authorized redirect URIs must contain exactly ");
-+      p.append(el("code", "", st.redirect_uri)); box.append(p);
-+    }
-+    const go = el("button", "primary", "Sign in with Google");
-+    go.onclick = async () => {
-+      const popup = window.open("", "mailkeep-oauth", "width=520,height=680");
-+      try { const { url } = await api("/api/login", {}); if (popup) popup.location.href = url; else location.href = url; }
-+      catch (e) { if (popup) popup.close(); err.textContent = e.message; }
-+    };
-+    box.append(go, err);
-+  }
-+  log.append(box);
-+}
-+async function refresh() {
-+  let st;
-+  try { st = await api("/api/status"); } catch (e) { log.textContent = e.message; return; }
-+  $("account").textContent = st.connected ? (st.demo ? "demo mailbox" : st.account) : "not connected";
-+  $("account").className = "chip" + (st.connected ? " ok" : "");
-+  $("mode").hidden = !st.mode;
-+  $("mode").textContent = st.mode === "openminion" ? "OpenMinion agent" : "rule parser";
-+  $("mode").title = st.mode_reason || "";
-+  $("logout").hidden = !st.connected || st.demo;
-+  $("composer").hidden = !st.connected;
-+  if (!st.connected) return setupScreen(st);
-+  if (!log.querySelector(".msg")) {
-+    log.innerHTML = "";
-+    addBot({ text: "Hi, I'm Mailkeep. I can find mail, label it, audit Trash and write drafts. Every change waits for your approval, and I never send mail.",
-+             hint: st.mode === "rules" ? "No model configured (" + st.mode_reason + "), so I use the built-in command parser. Type help." : "" });
-+  }
-+  $("input").focus();
-+}
-+window.addEventListener("message", (e) => { if (e.origin === location.origin && e.data === "mailkeep-auth") refresh(); });
-+window.addEventListener("focus", () => { if ($("composer").hidden) refresh(); });
-+refresh();
-+</script>
-+</body>
-+</html>
-diff --git a/mailkeep/web.py b/mailkeep/web.py
-new file mode 100644
-index 0000000..d592746
---- /dev/null
-+++ b/mailkeep/web.py
-@@ -0,0 +1,237 @@
-+"""Local pop-up chat UI for Mailkeep (stdlib HTTP server, no Node build).
-+
-+    python -m mailkeep ui            # app-style window on localhost
-+    python -m mailkeep ui --demo     # in-memory mailbox, no Google account
-+
-+Hardening for a localhost server:
-+* binds 127.0.0.1 only;
-+* rejects any Host header other than localhost/127.0.0.1:<port> (DNS rebinding);
-+* every /api call carries a per-launch token embedded in the page (CSRF);
-+* never logs request lines (the OAuth callback query holds the auth code).
-+"""
-+
-+from __future__ import annotations
-+
-+import html
-+import json
-+import secrets
-+import shutil
-+import subprocess
-+import threading
-+import webbrowser
-+from dataclasses import asdict
-+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-+from pathlib import Path
-+from urllib.parse import parse_qs, urlparse
-+
-+from .agent import MailkeepAgent
-+from .auth import WebLogin, cached_credentials, forget_token
-+from .config import ConfigError, client_type, has_client_credentials, save_client_file, ui_redirect_uri
-+from .demo import DemoGmailClient
-+from .session import Outcome, Session
-+
-+STATIC = Path(__file__).with_name("static")
-+
-+
-+class App:
-+    def __init__(self, *, demo: bool, limit: int, port: int):
-+        self.demo = demo
-+        self.limit = limit
-+        self.port = port
-+        self.token = secrets.token_urlsafe(24)
-+        self.login = WebLogin(ui_redirect_uri(port))
-+        self.lock = threading.Lock()
-+        self.agent: MailkeepAgent | None = None
-+        self.account = ""
-+        if demo:
-+            self.attach(DemoGmailClient())
-+
-+    def attach(self, backend) -> None:
-+        if self.agent:
-+            self.agent.close()
-+        self.agent = MailkeepAgent(Session(backend, limit=self.limit))
-+        try:
-+            self.account = backend.profile_email()
-+        except Exception:
-+            self.account = "(unknown)"
-+
-+    def ensure_connected(self) -> bool:
-+        with self.lock:
-+            if self.agent:
-+                return True
-+            credentials = cached_credentials()
-+            if credentials is None:
-+                return False
-+            from .gmail import build_client
-+
-+            self.attach(build_client(credentials))
-+            return True
-+
-+    def status(self) -> dict:
-+        connected = self.ensure_connected()
-+        try:
-+            kind = client_type() if has_client_credentials() else ""
-+        except ConfigError:
-+            kind = ""
-+        return {
-+            "demo": self.demo,
-+            "connected": connected,
-+            "account": self.account if connected else "",
-+            "client_configured": has_client_credentials(),
-+            "client_type": kind,
-+            "redirect_uri": self.login.redirect,
-+            "mode": self.agent.mode if self.agent else "",
-+            "mode_reason": self.agent.reason if self.agent else "",
-+        }
-+
-+    def disconnect(self) -> None:
-+        with self.lock:
-+            if self.agent:
-+                self.agent.close()
-+            self.agent, self.account = None, ""
-+            forget_token()
-+
-+
-+def outcome_json(outcome: Outcome) -> dict:
-+    return {
-+        "messages": [asdict(r) for r in outcome.responses if r.text or r.table or r.hint],
-+        "approval": outcome.approval.public() if outcome.approval else None,
-+    }
-+
-+
-+def make_handler(app: App):
-+    allowed_hosts = {f"localhost:{app.port}", f"127.0.0.1:{app.port}"}
-+
-+    class Handler(BaseHTTPRequestHandler):
-+        server_version = "Mailkeep"
-+
-+        def log_message(self, fmt, *args):
-+            return
-+
-+        def _send(self, status: int, body: bytes, ctype: str) -> None:
-+            self.send_response(status)
-+            self.send_header("Content-Type", ctype)
-+            self.send_header("Content-Length", str(len(body)))
-+            self.send_header("Cache-Control", "no-store")
-+            self.send_header("X-Frame-Options", "DENY")
-+            self.send_header("Referrer-Policy", "no-referrer")
-+            self.end_headers()
-+            self.wfile.write(body)
-+
-+        def _json(self, status: int, data: dict) -> None:
-+            self._send(status, json.dumps(data).encode(), "application/json")
-+
-+        def _authorized(self) -> bool:
-+            return self.headers.get("X-Mailkeep-Token") == app.token
-+
-+        def do_GET(self):
-+            if self.headers.get("Host", "") not in allowed_hosts:
-+                return self._send(403, b"bad host", "text/plain")
-+            url = urlparse(self.path)
-+            if url.path == "/":
-+                page = (STATIC / "index.html").read_text(encoding="utf-8").replace("__TOKEN__", app.token)
-+                return self._send(200, page.encode(), "text/html; charset=utf-8")
-+            if url.path == "/oauth/callback":
-+                return self._callback(parse_qs(url.query))
-+            if url.path == "/api/status":
-+                if not self._authorized():
-+                    return self._json(403, {"error": "forbidden"})
-+                try:
-+                    return self._json(200, app.status())
-+                except Exception as exc:
-+                    return self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
-+            return self._send(404, b"not found", "text/plain")
-+
-+        def _callback(self, query: dict) -> None:
-+            error = (query.get("error") or [""])[0]
-+            message = "Gmail connected. You can close this window."
-+            if error:
-+                message = f"Google did not grant access ({error}). Nothing was connected."
-+            else:
-+                try:
-+                    credentials = app.login.finish(
-+                        (query.get("state") or [""])[0], (query.get("code") or [""])[0]
-+                    )
-+                    from .gmail import build_client
-+
-+                    with app.lock:
-+                        app.attach(build_client(credentials))
-+                except Exception as exc:
-+                    message = f"Sign-in failed: {exc}"
-+            page = (
-+                "<!doctype html><meta charset=utf-8><title>Mailkeep</title>"
-+                "<body style='font:16px system-ui;padding:40px;background:#0f1115;color:#e7e9ee'>"
-+                f"<p>{html.escape(message)}</p><script>"
-+                "try{opener&&opener.postMessage('mailkeep-auth',location.origin)}catch(e){}"
-+                "setTimeout(()=>close(),1500)</script>"
-+            )
-+            self._send(200, page.encode(), "text/html; charset=utf-8")
-+
-+        def do_POST(self):
-+            if self.headers.get("Host", "") not in allowed_hosts or not self._authorized():
-+                return self._json(403, {"error": "forbidden"})
-+            try:
-+                length = min(int(self.headers.get("Content-Length") or 0), 1_000_000)
-+                body = json.loads(self.rfile.read(length) or b"{}")
-+            except ValueError:
-+                return self._json(400, {"error": "invalid JSON"})
-+            route = urlparse(self.path).path
-+            try:
-+                if route == "/api/client":
-+                    return self._json(200, {"client_type": save_client_file(str(body.get("json", "")))})
-+                if route == "/api/login":
-+                    return self._json(200, {"url": app.login.start()})
-+                if route == "/api/logout":
-+                    app.disconnect()
-+                    return self._json(200, {"ok": True})
-+                if route in {"/api/chat", "/api/approve"}:
-+                    if not app.ensure_connected() or app.agent is None:
-+                        return self._json(409, {"error": "Connect Gmail first."})
-+                    if route == "/api/chat":
-+                        outcome = app.agent.chat(str(body.get("text", ""))[:4000])
-+                    else:
-+                        outcome = app.agent.session.resolve(str(body.get("id", "")), bool(body.get("approve")))
-+                    return self._json(200, outcome_json(outcome))
-+            except ConfigError as exc:
-+                return self._json(400, {"error": str(exc)})
-+            except Exception as exc:
-+                return self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
-+            return self._json(404, {"error": "not found"})
-+
-+    return Handler
-+
-+
-+def open_window(url: str) -> None:
-+    """App-style window via Chrome/Edge --app, else a normal browser tab."""
-+    for name in ("google-chrome", "chrome", "chromium", "chromium-browser", "msedge", "microsoft-edge"):
-+        exe = shutil.which(name)
-+        if exe:
-+            try:
-+                subprocess.Popen([exe, f"--app={url}", "--window-size=1100,820"])
-+                return
-+            except OSError:
-+                continue
-+    webbrowser.open(url)
-+
-+
-+def serve(*, demo: bool, limit: int, port: int, open_browser: bool = True) -> int:
-+    app = App(demo=demo, limit=limit, port=port)
-+    try:
-+        server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
-+    except OSError as exc:
-+        print(f"Port {port} is busy ({exc}). Use --port or MAILKEEP_UI_PORT.")
-+        return 2
-+    url = f"http://localhost:{port}/"
-+    print(f"Mailkeep UI: {url}   (Ctrl+C to stop)")
-+    print(f"OAuth redirect URI (register only for Web clients): {ui_redirect_uri(port)}")
-+    if open_browser:
-+        threading.Timer(0.4, open_window, args=(url,)).start()
-+    try:
-+        server.serve_forever()
-+    except KeyboardInterrupt:
-+        pass
-+    finally:
-+        server.server_close()
-+        if app.agent:
-+            app.agent.close()
-+    return 0
-diff --git a/mailkeep.sh b/mailkeep.sh
-new file mode 100644
-index 0000000..ddd8cb6
---- /dev/null
-+++ b/mailkeep.sh
-@@ -0,0 +1,8 @@
-+#!/usr/bin/env sh
-+# Mailkeep launcher (macOS/Linux). Example: ./mailkeep.sh ui   or   ./mailkeep.sh ui --demo
-+cd "$(dirname "$0")" || exit 1
-+if [ ! -x .venv/bin/python ]; then
-+  echo "No virtualenv. Create one: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
-+  exit 1
-+fi
-+exec .venv/bin/python -m mailkeep "$@"
-diff --git a/requirements.txt b/requirements.txt
-index 1204680..64e8214 100644
---- a/requirements.txt
-+++ b/requirements.txt
-@@ -1,5 +1,10 @@
--# Mailkeep console runtime.
-+# Mailkeep runtime.
- google-api-python-client>=2.149
- google-auth-oauthlib>=1.2
- google-auth-httplib2>=0.2
- rich>=13
-+# Agent layer. Without a configured model provider Mailkeep falls back to its
-+# rule-based parser, so the UI still works.
-+openminion>=0.1.7
-+# Windows ships no IANA tz database; openminion's scheduler needs it.
-+tzdata; sys_platform == "win32"
-diff --git a/tests/test_oauth_config.py b/tests/test_oauth_config.py
-new file mode 100644
-index 0000000..9643423
---- /dev/null
-+++ b/tests/test_oauth_config.py
-@@ -0,0 +1,32 @@
 +import json
 +
 +import pytest
 +
-+from mailkeep import auth, config
-+
-+
-+def _client(tmp_path, monkeypatch, data):
-+    path = tmp_path / "client.json"
-+    path.write_text(json.dumps(data))
-+    monkeypatch.setenv("MAILKEEP_CLIENT_SECRET_FILE", str(path))
-+
-+
-+def test_web_client_unregistered_uri_fails_before_google(tmp_path, monkeypatch):
-+    _client(tmp_path, monkeypatch, {"web": {"client_id": "x", "client_secret": "y",
-+                                            "redirect_uris": ["http://localhost:8080/"]}})
-+    assert config.client_type() == "web"
-+    with pytest.raises(config.ConfigError, match="redirect"):
-+        auth.check_redirect(config.ui_redirect_uri(8765))
-+    auth.check_redirect("http://localhost:8080/")
-+
-+
-+def test_desktop_client_needs_no_registration(tmp_path, monkeypatch):
-+    _client(tmp_path, monkeypatch, {"installed": {"client_id": "x", "client_secret": "y"}})
-+    auth.check_redirect(config.ui_redirect_uri(8765))
-+    cfg = config.client_config("http://localhost:8765/oauth/callback")
-+    assert cfg["installed"]["redirect_uris"] == ["http://localhost:8765/oauth/callback"]
-+
-+
-+def test_save_client_file_rejects_non_google_json():
-+    with pytest.raises(config.ConfigError):
-+        config.save_client_file('{"foo": 1}')
-diff --git a/tests/test_session.py b/tests/test_session.py
-new file mode 100644
-index 0000000..7e8b6db
---- /dev/null
-+++ b/tests/test_session.py
-@@ -0,0 +1,60 @@
-+from mailkeep.demo import DemoGmailClient
-+from mailkeep.session import Session
-+
-+
-+def names(backend):
-+    return {label.name for label in backend.labels()}
-+
-+
-+def test_write_waits_for_approval_then_applies():
-+    backend = DemoGmailClient()
-+    session = Session(backend)
-+    session.run_command("find invoices")
-+    outcome = session.run_command("label 1-2 as Finance")
-+    assert outcome.approval is not None
-+    assert "Finance" not in names(backend)  # nothing written before approval
-+    done = session.resolve(outcome.approval.id, True)
-+    assert "Added to 2 message(s)" in done.responses[0].text
-+    assert "Finance" in names(backend)
-+
-+
-+def test_cancel_writes_nothing():
-+    backend = DemoGmailClient()
-+    session = Session(backend)
-+    session.run_command("find invoices")
-+    outcome = session.run_command("label 1 as Finance")
-+    assert session.resolve(outcome.approval.id, False).responses[0].text.startswith("Cancelled")
-+    assert "Finance" not in names(backend)
-+
-+
-+def test_mark_read_requires_approval():
-+    session = Session(DemoGmailClient())
-+    session.run_command("find unread emails")
-+    assert session.run_command("mark 1 read").approval is not None
-+
-+
-+def test_wrong_approval_id_is_rejected():
-+    session = Session(DemoGmailClient())
-+    session.run_command("find invoices")
-+    session.run_command("archive 1")
-+    assert "no longer pending" in session.resolve("nope", True).responses[0].text
-+
-+
-+def test_draft_followup_then_approve():
-+    session = Session(DemoGmailClient())
-+    session.run_command("find invoices")
-+    ask = session.run_command("draft a reply to 1")
-+    assert ask.approval is None
-+    pending = session.run_command("Thanks, will pay Friday.")
-+    assert pending.approval is not None
-+    assert "Draft created" in session.resolve(pending.approval.id, True).responses[0].text
-+
-+
-+def test_agent_falls_back_to_rules_without_model(monkeypatch):
-+    from mailkeep.agent import MailkeepAgent
-+
-+    monkeypatch.setenv("MAILKEEP_AGENT", "rules")
-+    agent = MailkeepAgent(Session(DemoGmailClient()))
-+    assert agent.mode == "rules"
-+    out = agent.chat("find invoices")
-+    assert out.responses[-1].table is not None
-diff --git a/tests/test_web.py b/tests/test_web.py
-new file mode 100644
-index 0000000..6b8fc6c
---- /dev/null
-+++ b/tests/test_web.py
-@@ -0,0 +1,44 @@
-+import json
-+import threading
-+import urllib.request
-+from http.server import ThreadingHTTPServer
-+
-+import pytest
-+
-+from mailkeep.web import App, make_handler
++from mailkeep import auth, config, llm
 +
 +
 +@pytest.fixture
-+def server(monkeypatch):
-+    monkeypatch.setenv("MAILKEEP_AGENT", "rules")
-+    srv = ThreadingHTTPServer(("127.0.0.1", 0), None)
-+    app = App(demo=True, limit=20, port=srv.server_address[1])
-+    srv.RequestHandlerClass = make_handler(app)
-+    threading.Thread(target=srv.serve_forever, daemon=True).start()
-+    yield app, f"http://localhost:{app.port}"
-+    srv.shutdown()
++def env_only_client(monkeypatch, tmp_path):
++    monkeypatch.setattr(config, "CLIENT_SECRET_FILE", tmp_path / "none.json")
++    monkeypatch.setattr(config, "CLIENT_TYPE_FILE", tmp_path / "client_type")
++    monkeypatch.setattr(config, "ENV_FILE", tmp_path / "gmail.env")
++    monkeypatch.setattr(config, "FALLBACK_ENV_FILE", tmp_path / "gmail2.env")
++    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "x.apps.googleusercontent.com")
++    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "s")
++    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_TYPE", raising=False)
 +
 +
-+def call(base, path, body=None, token=None):
-+    req = urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode(),
-+                                 headers={"X-Mailkeep-Token": token or "", "Content-Type": "application/json"})
-+    try:
-+        with urllib.request.urlopen(req) as res:
-+            return res.status, json.loads(res.read())
-+    except urllib.error.HTTPError as err:
-+        return err.code, json.loads(err.read())
++def test_env_only_client_type_is_not_guessed(env_only_client):
++    # The screenshot: env-only Web client was assumed Desktop -> redirect_uri_mismatch.
++    assert config.client_type() == "unknown"
++    with pytest.raises(config.ConfigError, match="redirect_uri_mismatch"):
++        auth.check_redirect("http://localhost:8765/oauth/callback")
 +
 +
-+def test_api_requires_token(server):
-+    app, base = server
-+    assert call(base, "/api/chat", {"text": "find invoices"})[0] == 403
++def test_type_picked_in_ui_is_remembered(env_only_client):
++    assert config.save_client_type("desktop") == "installed"
++    assert config.client_type() == "installed"
++    auth.check_redirect("http://localhost:8765/oauth/callback")  # Desktop: no registration needed
++    config.save_client_type("web")
++    assert config.client_type() == "web"
 +
 +
-+def test_chat_and_approval_round_trip(server):
-+    app, base = server
-+    status, out = call(base, "/api/chat", {"text": "find invoices"}, app.token)
-+    assert status == 200 and out["messages"][-1]["table"]["rows"]
-+    _, out = call(base, "/api/chat", {"text": "archive 1"}, app.token)
-+    assert out["approval"]
-+    _, done = call(base, "/api/approve", {"id": out["approval"]["id"], "approve": True}, app.token)
-+    assert done["messages"][0]["text"].startswith("Archived")
++def test_bad_client_type_rejected(env_only_client):
++    with pytest.raises(config.ConfigError):
++        config.save_client_type("tv")
++
++
++def test_scopes_match_workspace_mcp_drafts_and_never_send():
++    assert "https://www.googleapis.com/auth/gmail.send" not in config.SCOPES
++    for scope in ("gmail.readonly", "gmail.labels", "gmail.modify", "gmail.compose", "userinfo.email"):
++        assert f"https://www.googleapis.com/auth/{scope}" in config.SCOPES
++    launcher = (config.ROOT / "scripts" / "start_gmail_mcp.py").read_text(encoding="utf-8")
++    assert '"gmail:drafts"' in launcher and '"gmail:full"' not in launcher
++
++
++def test_unticked_gmail_boxes_are_detected():
++    assert auth.missing_scopes(["openid"]) == list(config.REQUIRED_SCOPES)
++    assert auth.missing_scopes(config.SCOPES) == []
++
++
++def test_mcp_token_written_in_workspace_mcp_format(tmp_path, monkeypatch):
++    monkeypatch.setattr(auth, "TOKEN_FILE", tmp_path / "mailkeep-token.json")
++    monkeypatch.setattr(auth, "TOKEN_DIR", tmp_path)
++    monkeypatch.setattr(auth.mcp_token_path, "__defaults__", (tmp_path,))
++
++    class Creds:
++        token, refresh_token, token_uri = "t", "r", "https://oauth2.googleapis.com/token"
++        client_id, client_secret, scopes, expiry = "id", "sec", list(config.SCOPES), None
++
++        def to_json(self):
++            return "{}"
++
++    auth.save_credentials(Creds(), "a.b+c@gmail.com")
++    data = json.loads((tmp_path / "a.b%2Bc@gmail.com.json").read_text())
++    assert data["refresh_token"] == "r" and data["client_id"] == "id"
++
++
++def test_access_denied_explains_test_users():
++    assert "Test users" in auth.CONSENT_ERRORS["access_denied"]
++
++
++@pytest.mark.parametrize(
++    "key,slot,base,env",
++    [
++        ("portal", "openai", "https://api.cortensor.app/v1", "CORTENSOR_API_KEY"),
++        ("gemini", "openai", "https://generativelanguage.googleapis.com/v1beta/openai/", "GEMINI_API_KEY"),
++        ("openrouter", "openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
++    ],
++)
++def test_provider_presets(monkeypatch, key, slot, base, env):
++    monkeypatch.setenv("MAILKEEP_LLM_PROVIDER", key)
++    cfg = llm.build_config(llm.selected())
++    assert cfg["agents"]["openminion"] == {"name": "openminion", "provider": slot, "default_channel": "console"}
++    assert cfg["providers"][slot]["base_url"] == base
++    assert cfg["providers"][slot]["api_key_env"] == env
++    assert "system" not in cfg
++
++
++def test_unknown_provider_falls_back_to_rules(monkeypatch):
++    from mailkeep import agent
++
++    monkeypatch.setenv("MAILKEEP_LLM_PROVIDER", "nope")
++    mode, reason = agent.resolve_mode()
++    assert mode == "rules" and "nope" in reason
++
++
++def test_selected_provider_without_key_falls_back(monkeypatch):
++    from mailkeep import agent
++
++    monkeypatch.setenv("MAILKEEP_LLM_PROVIDER", "gemini")
++    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
++    monkeypatch.setattr(llm, "setting", lambda name: "gemini" if name == "MAILKEEP_LLM_PROVIDER" else "")
++    mode, reason = agent.resolve_mode()
++    assert mode == "rules" and "GEMINI_API_KEY" in reason

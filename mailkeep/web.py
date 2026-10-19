@@ -26,7 +26,14 @@ from urllib.parse import parse_qs, urlparse
 
 from .agent import MailkeepAgent
 from .auth import WebLogin, cached_credentials, forget_token
-from .config import ConfigError, client_type, has_client_credentials, save_client_file, ui_redirect_uri
+from .config import (
+    ConfigError,
+    client_type,
+    has_client_credentials,
+    save_client_file,
+    save_client_type,
+    ui_redirect_uri,
+)
 from .demo import DemoGmailClient
 from .session import Outcome, Session
 
@@ -146,7 +153,11 @@ def make_handler(app: App):
             error = (query.get("error") or [""])[0]
             message = "Gmail connected. You can close this window."
             if error:
-                message = f"Google did not grant access ({error}). Nothing was connected."
+                from .auth import CONSENT_ERRORS
+
+                message = CONSENT_ERRORS.get(
+                    error, f"Google did not grant access ({error}). Nothing was connected."
+                )
             else:
                 try:
                     credentials = app.login.finish(
@@ -179,6 +190,8 @@ def make_handler(app: App):
             try:
                 if route == "/api/client":
                     return self._json(200, {"client_type": save_client_file(str(body.get("json", "")))})
+                if route == "/api/client-type":
+                    return self._json(200, {"client_type": save_client_type(str(body.get("type", "")))})
                 if route == "/api/login":
                     return self._json(200, {"url": app.login.start()})
                 if route == "/api/logout":

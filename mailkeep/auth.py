@@ -23,6 +23,7 @@ import urllib.request
 from pathlib import Path
 
 from .config import (
+    REQUIRED_SCOPES,
     SCOPES,
     TOKEN_DIR,
     TOKEN_FILE,
@@ -39,20 +40,90 @@ from .config import (
 )
 
 
-def save_credentials(credentials) -> None:
-    TOKEN_DIR.mkdir(parents=True, exist_ok=True)
-    TOKEN_FILE.write_text(credentials.to_json(), encoding="utf-8")
+def _write_private(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
     try:
-        TOKEN_FILE.chmod(0o600)
+        path.chmod(0o600)
     except OSError:
         pass
 
 
+def mcp_token_path(email: str, base: Path = TOKEN_DIR) -> Path:
+    """File name google_workspace_mcp's LocalDirectoryCredentialStore looks up."""
+    return base / f"{urllib.parse.quote(email, safe='@._-')}.json"
+
+
+def mcp_token_payload(credentials) -> dict:
+    return {
+        "token": credentials.token,
+        "refresh_token": credentials.refresh_token,
+        "token_uri": credentials.token_uri,
+        "client_id": credentials.client_id,
+        "client_secret": credentials.client_secret,
+        "scopes": list(credentials.scopes or SCOPES),
+        "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
+    }
+
+
+def _account_email(credentials) -> str:
+    try:
+        from googleapiclient.discovery import build
+
+        service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
+        return str(service.users().getProfile(userId="me").execute().get("emailAddress", ""))
+    except Exception:
+        return ""
+
+
+def save_credentials(credentials, email: str | None = None) -> None:
+    """Save the token for Mailkeep and, in workspace-mcp's format, for the MCP
+    server (same directory: WORKSPACE_MCP_CREDENTIALS_DIR = TOKEN_DIR), so
+    scripts/start_gmail_mcp.py never asks for a second consent."""
+    _write_private(TOKEN_FILE, credentials.to_json())
+    if email is None:
+        email = _account_email(credentials)
+    if email:
+        _write_private(mcp_token_path(email), json.dumps(mcp_token_payload(credentials), indent=2))
+
+
+def missing_scopes(granted) -> list[str]:
+    granted = set(granted or [])
+    return [s for s in REQUIRED_SCOPES if s not in granted]
+
+
+# Google `error=` values on the callback -> what to do about them.
+CONSENT_ERRORS = {
+    "access_denied": (
+        "Google blocked the sign-in or it was declined. If Google said 'Access "
+        "blocked: ... has not completed the Google verification process', open "
+        "Google Cloud Console -> Google Auth Platform -> Audience and add your Gmail "
+        "address under Test users (or publish the app), then sign in again and tick "
+        "every Gmail checkbox."
+    ),
+    "admin_policy_enforced": "Your Google Workspace admin blocks this app.",
+}
+
+
 def check_redirect(uri: str) -> None:
     """Fail here, not on Google's error page, for unregistered Web-client URIs."""
-    if client_type() != "web":
+    kind = client_type()
+    if kind == "unknown":
+        raise ConfigError(
+            "Mailkeep cannot tell from the client ID whether your Google OAuth client "
+            "is a 'Desktop app' or a 'Web application', and guessing wrong is what "
+            "produces 'Error 400: redirect_uri_mismatch'. Pick the type in the setup "
+            "screen, paste the downloaded client JSON, or set "
+            "GOOGLE_OAUTH_CLIENT_TYPE=desktop|web in .openminion/gmail.env. "
+            f"For a Web client, also register exactly: {uri}"
+        )
+    if kind != "web":
         return
     registered = registered_redirect_uris()
+    if not registered:
+        # Declared Web via env/UI: Google's list is not visible locally. The UI
+        # shows the exact URI to register before sending the user to Google.
+        return
     if uri not in registered:
         raise ConfigError(
             "Your OAuth client is a 'Web application' and does not list the redirect "
@@ -80,7 +151,7 @@ def cached_credentials():
             credentials.refresh(Request())
         except Exception:
             return None
-        save_credentials(credentials)  # was never persisted before -> refresh every run
+        save_credentials(credentials, "")  # persist refresh; MCP refreshes its own copy
     return credentials if credentials.valid else None
 
 
@@ -162,6 +233,14 @@ class WebLogin:
         # code= (not the callback URL) avoids oauthlib's https-only check on
         # the http://localhost callback; PKCE verifier stays on the flow.
         flow.fetch_token(code=code)
+        lacking = missing_scopes(flow.credentials.scopes)
+        if flow.credentials.scopes and lacking:
+            # Gmail boxes unticked on Google's page: signed in, but no access.
+            raise AuthRequired(
+                "Signed in, but Gmail access was not granted ("
+                + ", ".join(s.rsplit("/", 1)[-1] for s in lacking)
+                + "). Sign in again and tick every checkbox on Google's page."
+            )
         save_credentials(flow.credentials)
         return flow.credentials
 
@@ -187,4 +266,7 @@ def forget_token(path: Path = TOKEN_FILE) -> bool:
     except Exception:
         pass
     path.unlink()
+    if path == TOKEN_FILE:
+        for extra in TOKEN_DIR.glob("*@*.json"):  # workspace-mcp copies
+            extra.unlink()
     return True

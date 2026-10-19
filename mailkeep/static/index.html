@@ -173,10 +173,30 @@ function setupScreen(st) {
     box.append(ta, save, err);
   } else {
     box.append(el("p", "", "Step 2. Google will ask you to allow Mailkeep to read, label and trash mail and to create drafts. It cannot send mail. Your token stays on this computer."));
-    if (st.client_type === "web") {
-      const p = el("p", "muted", "Your client is a Web application, so its Authorized redirect URIs must contain exactly ");
-      p.append(el("code", "", st.redirect_uri)); box.append(p);
+    if (st.client_type === "unknown") {
+      // Only ID + secret are known (gmail.env). Guessing "Desktop" here is what
+      // produced Google's "Error 400: redirect_uri_mismatch" for Web clients.
+      box.append(el("p", "", "Which kind of OAuth client did you create? Google Cloud Console → Credentials shows it in the 'Type' column."));
+      const pick = el("div", "row");
+      for (const [type, label] of [["desktop", "Desktop app"], ["web", "Web application"]]) {
+        const b = el("button", type === "desktop" ? "primary" : "", label);
+        b.onclick = async () => {
+          try { await api("/api/client-type", { type }); refresh(); } catch (e) { err.textContent = e.message; }
+        };
+        pick.append(b);
+      }
+      box.append(pick, err);
+      log.append(box);
+      return;
     }
+    if (st.client_type === "web") {
+      const p = el("p", "muted", "Your client is a Web application. Before signing in, add this exact line under Authorized redirect URIs and press Save (Google can take a few minutes to apply it): ");
+      const copy = el("button", "", "Copy");
+      copy.onclick = () => navigator.clipboard && navigator.clipboard.writeText(st.redirect_uri);
+      p.append(el("code", "", st.redirect_uri), " ", copy); box.append(p);
+      box.append(el("p", "muted", "localhost and 127.0.0.1 are different to Google, and so is a trailing slash."));
+    }
+    box.append(el("p", "muted", "If Google says 'Access blocked', add your Gmail address under Google Auth Platform → Audience → Test users."));
     const go = el("button", "primary", "Sign in with Google");
     go.onclick = async () => {
       const popup = window.open("", "mailkeep-oauth", "width=520,height=680");
