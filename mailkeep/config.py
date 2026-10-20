@@ -163,8 +163,66 @@ def env_values() -> dict[str, str]:
     return merged
 
 
+# Values entered in the UI settings gear. They sit on top of the environment
+# and .env files (which stay the preset). "Session" values live in memory only;
+# "saved" values are written to SETTINGS_FILE (inside the gitignored
+# .openminion/ folder, so keys never leave the machine).
+SETTINGS_FILE = ROOT / ".openminion" / "mailkeep-settings.json"
+_session_overrides: dict[str, str] = {}
+_saved_cache: tuple[float, dict[str, str]] = (-1.0, {})
+
+
+def _saved_overrides() -> dict[str, str]:
+    global _saved_cache
+    try:
+        mtime = SETTINGS_FILE.stat().st_mtime
+    except OSError:
+        return {}
+    if mtime != _saved_cache[0]:
+        try:
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            values = {str(k): str(v) for k, v in (data.get("values") or {}).items() if v}
+        except (OSError, ValueError, AttributeError):
+            values = {}
+        _saved_cache = (mtime, values)
+    return _saved_cache[1]
+
+
+def ui_override(name: str) -> tuple[str, str]:
+    """(value, "session"|"saved"|"") set through the UI settings panel."""
+    if _session_overrides.get(name):
+        return _session_overrides[name], "session"
+    value = _saved_overrides().get(name, "")
+    return (value, "saved") if value else ("", "")
+
+
+def set_ui_override(name: str, value: str, *, persist: bool) -> None:
+    """Set (or clear, with value="") a UI setting. persist=True writes the file."""
+    global _saved_cache
+    value = value.strip()
+    _session_overrides.pop(name, None)
+    saved = dict(_saved_overrides())
+    if persist or name in saved:
+        if value and persist:
+            saved[name] = value
+        else:
+            saved.pop(name, None)
+        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS_FILE.write_text(json.dumps({"values": saved}, indent=2), encoding="utf-8")
+        try:
+            os.chmod(SETTINGS_FILE, 0o600)
+        except OSError:
+            pass
+        _saved_cache = (-1.0, {})
+    if value and not persist:
+        _session_overrides[name] = value
+
+
 def setting(name: str) -> str:
-    """Process environment wins, then the project env files (see env_files())."""
+    """UI settings win, then the process environment, then the env files."""
+    value, _ = ui_override(name)
+    if value:
+        return value
     value = os.environ.get(name, "").strip()
     if value:
         return value

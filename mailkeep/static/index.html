@@ -77,6 +77,14 @@
   #llm.ok { color: var(--ok, #5fbf8f); }
   #llm.bad { color: var(--danger); }
   .action.superseded { opacity: .55; }
+  /* Settings gear: which providers are online, what each model is for. */
+  #gear { padding: 6px 9px; }
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: grid; place-items: center; z-index: 10; padding: 16px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); width: min(960px, 100%); max-height: 90vh; overflow-y: auto; padding: 20px 22px; }
+  .panel h2 { margin: 0 0 4px; font-size: 18px; } .panel h3 { margin: 18px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .panel input[type=text], .panel input[type=password], .panel select { font: 12px var(--mono); background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; width: 100%; min-width: 110px; }
+  .panel td { vertical-align: middle; }
+  .state { font: 12px var(--mono); } .state.online { color: var(--ok); } .state.offline, .state.auth_error { color: var(--danger); } .state.not_configured, .state.unknown { color: var(--muted); }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -88,6 +96,7 @@
     <div id="mode" class="chip" hidden></div>
     <button id="llm" class="chip" hidden title="Model connection (click to re-check)"></button>
     <div class="spacer"></div>
+    <button id="gear" title="Models &amp; providers" aria-label="Settings"></button>
     <button id="clear" hidden>Clear</button>
     <button id="logout" class="danger" hidden>Disconnect</button>
   </header>
@@ -100,6 +109,26 @@
     </form>
     <div class="lock" id="lock" hidden></div>
   </footer>
+</div>
+<div id="settings" class="overlay" hidden>
+  <div class="panel" role="dialog" aria-labelledby="settings-title">
+    <div style="display:flex;align-items:center;gap:10px">
+      <h2 id="settings-title">Models &amp; providers</h2><div class="spacer"></div>
+      <button id="settings-refresh">Re-check</button><button id="settings-close" aria-label="Close">Close</button>
+    </div>
+    <div class="muted" id="settings-mode"></div>
+    <h3>What each model is for</h3>
+    <div class="tablewrap"><table id="roles"></table></div>
+    <h3>Providers</h3>
+    <div class="muted">.env is only the preset. Keys typed here override it. Leave a field empty to keep it; type <code>-</code> to clear.</div>
+    <div class="tablewrap"><table id="providers"></table></div>
+    <div class="row" style="align-items:center">
+      <label class="muted"><input type="radio" name="persist" value="0" checked> This session only</label>
+      <label class="muted"><input type="radio" name="persist" value="1"> Save on this computer (.openminion/mailkeep-settings.json)</label>
+      <div class="spacer"></div><button class="primary" id="settings-save">Save &amp; activate</button>
+    </div>
+    <div class="muted" id="settings-msg"></div>
+  </div>
 </div>
 <script>
 const TOKEN = "__TOKEN__";
@@ -121,6 +150,8 @@ function icon(name) {
   s.classList.add("i"); s.innerHTML = ICONS[name]; return s;   // static markup only, never mail content
 }
 $("send").append(icon("send"));
+ICONS.gear = '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>';
+$("gear").append(icon("gear"));
 
 async function api(path, body) {
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
@@ -392,6 +423,54 @@ setInterval(async () => {
 }, 15000);
 window.addEventListener("message", (e) => { if (e.origin === location.origin && e.data === "mailkeep-auth") refresh(); });
 window.addEventListener("focus", () => { if ($("composer").hidden) refresh(); });
+// ---- Settings gear ----
+const STATE_NAMES = { online: "online", offline: "offline", auth_error: "key rejected", not_configured: "no key", unknown: "unknown" };
+function sEl(tag, text, cls) { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; }
+function renderSettings(data) {
+  const provs = data.providers || [];
+  $("settings-mode").textContent = (data.online || []).length + " of " + provs.length + " providers online. " +
+    (data.roles && data.roles.default && data.roles.default.provider ? "Roles that are not set use the main model." : "No main model: the built-in rule parser answers. Paste a key below to activate one.");
+  const roles = $("roles"); roles.replaceChildren();
+  const hr = sEl("tr"); ["Role", "Used for", "Provider", "Model", "Change to", "Note"].forEach((h) => hr.append(sEl("th", h))); roles.append(hr);
+  for (const [role, info] of Object.entries(data.roles || {})) {
+    const tr = sEl("tr"); tr.append(sEl("td", role), sEl("td", info.purpose), sEl("td", info.label), sEl("td", info.model || "-"));
+    const sel = sEl("select"); sel.dataset.role = role;
+    sel.append(new Option("(keep)", ""), new Option(role === "default" ? "(use .env preset)" : "(use main model)", "-"));
+    provs.filter((p) => p.key_present).forEach((p) => sel.append(new Option(p.label + " - " + (STATE_NAMES[p.state] || p.state), p.key)));
+    const td = sEl("td"); td.append(sel); tr.append(td, sEl("td", info.note || "", "muted")); roles.append(tr);
+  }
+  const t = $("providers"); t.replaceChildren();
+  const ph = sEl("tr"); ["Provider", "Status", "Serves", "API key", "Model", "Base URL"].forEach((h) => ph.append(sEl("th", h))); t.append(ph);
+  for (const p of provs) {
+    const tr = sEl("tr"); tr.dataset.key = p.key;
+    const name = sEl("td", p.label); name.append(sEl("div", p.key_present ? "key: " + p.key_source : "no key", "muted"));
+    const st = sEl("td", (STATE_NAMES[p.state] || p.state) + (p.state === "online" && p.latency_ms ? " · " + p.latency_ms + " ms" : ""), "state " + p.state); st.title = p.detail || "";
+    const mk = (field, ph, type) => { const i = sEl("input"); i.type = type || "text"; i.dataset.field = field; i.placeholder = ph; i.autocomplete = "off"; const td = sEl("td"); td.append(i); return td; };
+    tr.append(name, st, sEl("td", (p.roles || []).join(", ") || "-"),
+      mk("api_key", p.key_present ? "•••• (set)" : "paste API key", "password"), mk("model", p.model || "model id"), mk("base_url", p.base_url || "https://.../v1"));
+    t.append(tr);
+  }
+}
+async function openSettings() {
+  $("settings").hidden = false; $("settings-msg").textContent = "Checking which providers are online…";
+  try { renderSettings(await api("/api/providers")); $("settings-msg").textContent = ""; }
+  catch (e) { $("settings-msg").textContent = e.message; }
+}
+$("gear").onclick = openSettings;
+$("settings-refresh").onclick = openSettings;
+$("settings-close").onclick = () => { $("settings").hidden = true; refresh(); };
+$("settings-save").onclick = async () => {
+  const body = { persist: document.querySelector("input[name=persist]:checked").value === "1", providers: {}, roles: {} };
+  for (const tr of $("providers").querySelectorAll("tr[data-key]")) {
+    const v = {}; tr.querySelectorAll("input").forEach((i) => { if (i.value.trim()) v[i.dataset.field] = i.value.trim(); });
+    if (Object.keys(v).length) body.providers[tr.dataset.key] = v;
+  }
+  $("roles").querySelectorAll("select").forEach((s) => { if (s.value) body.roles[s.dataset.role] = s.value; });
+  $("settings-save").disabled = true; $("settings-msg").textContent = "Saving and checking…";
+  try { renderSettings(await api("/api/settings", body)); $("settings-msg").textContent = "Saved. Active from your next message."; refresh(); }
+  catch (e) { $("settings-msg").textContent = "Not saved: " + e.message; }
+  finally { $("settings-save").disabled = false; }
+};
 refresh();
 </script>
 </body>

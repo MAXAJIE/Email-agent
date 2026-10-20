@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from mailkeep import fastllm
+from mailkeep import config, fastllm
 
 
 @pytest.fixture(autouse=True)
@@ -12,3 +12,6 @@ def _offline_safe(monkeypatch, tmp_path):
         "online", 1, "stub", time.time()))
     monkeypatch.setattr(fastllm, "retry_backoff", lambda: 0.0)
     monkeypatch.setattr(fastllm, "LOG_FILE", tmp_path / "mailkeep.log")
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "mailkeep-settings.json")
+    monkeypatch.setattr(config, "_session_overrides", {})
+    monkeypatch.setattr(config, "_saved_cache", (-1.0, {}))

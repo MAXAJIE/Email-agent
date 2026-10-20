@@ -495,3 +495,27 @@ def is_off_topic(text: str) -> bool:
     if "?" in text and re.match(r"^\s*(what|who|where|when|why|how)\b", stripped):
         return True
     return False
+
+
+# Words that mean the mailbox has to be read or changed: those turns go to the
+# OpenMinion agent (with the mailkeep_command tool). Anything else is a simple
+# question answered by one direct completion (much faster).
+_AGENT_WORDS = (
+    r"\b(find|search|look|open|list|show|get|fetch|check|labels?|unread|inbox|trash|spam|"
+    r"from|emails?|e-mails?|mails?|messages?|newsletters?|invoices?|receipts?|attachments?|"
+    r"threads?|senders?|subjects?|triage|classify|categori[sz]e|prioriti[sz]e|summari[sz]e|"
+    r"analy[sz]e|draft|reply|compose|write|archive|delete|restore|mark|label)\b"
+)
+
+
+def direct_chat_enabled() -> bool:
+    """MAILKEEP_DIRECT_CHAT: on by default; off/0/no/false always uses the agent."""
+    return (setting("MAILKEEP_DIRECT_CHAT") or "on").strip().lower() not in ("0", "off", "no", "false")
+
+
+def needs_agent(text: str) -> bool:
+    """True when the message needs a mailbox tool (read or write)."""
+    import re
+
+    return action_intent(text) >= action_threshold() or bool(re.search(_AGENT_WORDS, text.lower())) \
+        or bool(re.search(r"\b\d+\b", text))

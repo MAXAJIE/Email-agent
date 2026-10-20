@@ -152,6 +152,11 @@ def make_handler(app: App):
                 return self._send(200, page.encode(), "text/html; charset=utf-8")
             if url.path == "/oauth/callback":
                 return self._callback(parse_qs(url.query))
+            if url.path == "/api/providers":
+                if not self._authorized():
+                    return self._json(403, {"error": "forbidden"})
+                from . import providers
+                return self._json(200, providers.inventory(probe=True))
             if url.path.startswith("/api/jobs/"):
                 if not self._authorized():
                     return self._json(403, {"error": "forbidden"})
@@ -229,6 +234,15 @@ def make_handler(app: App):
                     return self._json(200, {"url": app.login.start()})
                 if route == "/api/llm-check":
                     return self._json(200, app.llm_health(refresh=True))
+                if route == "/api/settings":
+                    from . import providers
+                    providers.apply_settings(body)
+                    if app.agent is not None:
+                        app.agent.reload()
+                    data = providers.inventory(probe=True)
+                    data["mode"] = app.agent.mode if app.agent else data["mode_hint"]
+                    data["mode_reason"] = app.agent.reason if app.agent else ""
+                    return self._json(200, data)
                 if route == "/api/logout":
                     app.disconnect()
                     return self._json(200, {"ok": True})
@@ -272,6 +286,14 @@ def open_window(url: str) -> None:
 
 
 def serve(*, demo: bool, limit: int, port: int, open_browser: bool = True) -> int:
+    # Before anything else: which providers/models are online and which role
+    # each one serves (unset roles fall back to the main model, then rules).
+    from . import providers
+    try:
+        for line in providers.startup_report():
+            print(f"[mailkeep] {line}", flush=True)
+    except Exception as exc:  # never block startup on a probe
+        print(f"[mailkeep] provider check failed: {type(exc).__name__}: {exc}", flush=True)
     app = App(demo=demo, limit=limit, port=port)
     try:
         server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
