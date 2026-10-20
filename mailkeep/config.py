@@ -18,6 +18,14 @@ FALLBACK_ENV_FILE = ROOT / "scripts" / "gmail.env"
 # Plain `.env` files are read too (project root first): many users keep their
 # provider key there, and before this it was silently ignored.
 DOTENV_FILES = (ROOT / ".env", ROOT / ".openminion" / ".env", ROOT / "scripts" / ".env")
+# Where people actually drop gmail.env when following the example: the project
+# root, or with a hidden ".txt" from Windows Notepad. All are read, in order.
+EXTRA_ENV_FILES = (
+    ROOT / "gmail.env",
+    ROOT / ".openminion" / "gmail.env.txt",
+    ROOT / "scripts" / "gmail.env.txt",
+    ROOT / "gmail.env.txt",
+)
 TOKEN_DIR = ROOT / ".openminion" / "gmail" / "credentials"
 TOKEN_FILE = TOKEN_DIR / "mailkeep-token.json"
 # Client JSON downloaded from Google Cloud Console. Its top-level key
@@ -111,7 +119,12 @@ def load_env_file(path: Path = ENV_FILE) -> dict[str, str]:
         key, _, value = line.partition("=")
         key = key.strip()
         value = value.strip()
-        if value[:1] in {'"', "'"} and value[1:].find(value[0]) != -1:
+        if value.startswith("#"):
+            # `KEY=   # comment` means empty, not the comment text. Before, the
+            # example's `MAILKEEP_LLM_API_KEY=  # or OPENROUTER_API_KEY` line
+            # became a bogus key that hid the real one.
+            value = ""
+        elif value[:1] in {'"', "'"} and value[1:].find(value[0]) != -1:
             value = value[1 : 1 + value[1:].find(value[0])]
         else:
             value = value.split(" #", 1)[0].split("\t#", 1)[0].strip()
@@ -121,8 +134,33 @@ def load_env_file(path: Path = ENV_FILE) -> dict[str, str]:
 
 
 def env_files() -> tuple[Path, ...]:
-    """Every file `setting()` reads, in priority order."""
-    return (ENV_FILE, FALLBACK_ENV_FILE, *DOTENV_FILES)
+    """Every file `setting()` reads, in priority order.
+
+    MAILKEEP_ENV_FILE (process environment only) points at any other file and
+    is read first, so a launcher or another machine can keep it elsewhere.
+    """
+    files: list[Path] = []
+    custom = os.environ.get("MAILKEEP_ENV_FILE", "").strip()
+    if custom:
+        files.append(Path(custom).expanduser())
+    files += [ENV_FILE, FALLBACK_ENV_FILE, *EXTRA_ENV_FILES, *DOTENV_FILES]
+    seen: set[Path] = set()
+    unique = []
+    for f in files:
+        if f not in seen:
+            seen.add(f)
+            unique.append(f)
+    return tuple(unique)
+
+
+def env_values() -> dict[str, str]:
+    """Merged view of all env files (earlier files win). Values are secrets."""
+    merged: dict[str, str] = {}
+    for path in env_files():
+        for key, value in load_env_file(path).items():
+            if value and key not in merged:
+                merged[key] = value
+    return merged
 
 
 def setting(name: str) -> str:

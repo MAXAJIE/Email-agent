@@ -2,10 +2,11 @@
 
 Everything is configured in `.openminion/gmail.env`; nothing else to edit:
 
-    MAILKEEP_LLM_PROVIDER=openrouter    # openrouter | gemini | portal | openai | custom
+    MAILKEEP_LLM_PROVIDER=openrouter    # openrouter | gemini | portal | openai | nvidia | custom
     MAILKEEP_LLM_MODEL=openai/gpt-4.1-mini
     MAILKEEP_LLM_API_KEY=sk-or-...      # or the provider's own name (OPENROUTER_API_KEY, ...)
-    MAILKEEP_LLM_BASE_URL=              # optional; required for "custom"
+    MAILKEEP_LLM_BASE_URL=              # optional; required for "custom" unless the key is recognised
+    MAILKEEP_LLM_TIMEOUT=120            # optional; seconds per model call
 
 Short aliases LLM_PROVIDER / LLM_MODEL / LLM_API_KEY / LLM_BASE_URL also work.
 Without MAILKEEP_LLM_PROVIDER the first provider whose key is present wins
@@ -28,7 +29,7 @@ import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .config import ROOT, env_files, setting
+from .config import ROOT, env_files, env_values, setting
 
 GENERATED_CONFIG = ROOT / ".openminion" / "mailkeep-agent.json"
 
@@ -67,13 +68,46 @@ PRESETS: dict[str, Preset] = {
         "openai", "OpenAI", "openai", "https://api.openai.com/v1",
         "OPENAI_API_KEY", "gpt-4.1-mini",
     ),
+    "nvidia": Preset(
+        "nvidia", "NVIDIA NIM", "openai", "https://integrate.api.nvidia.com/v1",
+        "NVIDIA_API_KEY", "",
+        alt_key_envs=("NVIDIA_NIM_API_KEY", "NIM_API_KEY"),
+    ),
     # Any OpenAI-compatible endpoint: set MAILKEEP_LLM_BASE_URL + model + key.
+    # When the base URL is omitted, a recognisable key (e.g. nvapi-... for
+    # NVIDIA NIM) supplies it, so "custom" never aborts before a request.
     "custom": Preset(
         "custom", "Custom (OpenAI-compatible)", "openai", "",
         "MAILKEEP_LLM_API_KEY", "",
+        alt_key_envs=("OPENAI_API_KEY",),
     ),
 }
-ALIASES = {"cortensor": "portal", "google": "gemini", "or": "openrouter"}
+ALIASES = {
+    "cortensor": "portal",
+    "google": "gemini",
+    "or": "openrouter",
+    "nim": "nvidia",
+    "nvidia nim": "nvidia",
+}
+# Recognisable key shapes, most specific first. Used when the provider is not
+# named, so a key alone (under any variable name) still selects its provider,
+# and to fill in a missing base URL for the "custom" provider.
+KEY_PREFIXES = (
+    ("sk-or-", "openrouter"),
+    ("nvapi-", "nvidia"),
+    ("AIza", "gemini"),
+    ("sk-", "openai"),
+)
+
+
+def _provider_for_key(value: str) -> str:
+    return next((name for prefix, name in KEY_PREFIXES if value.startswith(prefix)), "")
+
+
+def _key_by_prefix(provider: str) -> str:
+    """A value in the process env or env files that looks like `provider`'s key."""
+    candidates = list(env_values().values()) + list(os.environ.values())
+    return next((v.strip() for v in candidates if _provider_for_key(v.strip()) == provider), "")
 
 
 def _opt(name: str) -> str:
@@ -85,7 +119,31 @@ def _api_key(preset: Preset) -> str:
     value = _opt("API_KEY") or setting(preset.key_env)
     for name in preset.alt_key_envs:
         value = value or setting(name)
+    if not value and preset.key != "custom":
+        value = _key_by_prefix(preset.key)
     return value
+
+
+def _inferred_base_url(key: str) -> str:
+    """Base URL of the provider whose key shape matches `key` ("" if unknown).
+
+    Only vendor-specific prefixes qualify. A bare ``sk-`` key is used by many
+    vendors and local proxies, so it must not silently send traffic to OpenAI.
+    """
+    provider = _provider_for_key(key.strip())
+    if provider in {"", "openai"}:
+        return ""
+    preset = PRESETS.get(provider)
+    return preset.base_url if preset is not None else ""
+
+
+def _timeout(default: int) -> int:
+    raw = _opt("TIMEOUT").strip()
+    try:
+        value = int(float(raw)) if raw else default
+    except ValueError:
+        raise ValueError(f"MAILKEEP_LLM_TIMEOUT={raw!r} is not a number of seconds") from None
+    return value if value > 0 else default
 
 
 def by_name(name: str) -> Preset | None:
@@ -107,19 +165,40 @@ def selected() -> Preset | None:
     else:
         preset = next((p for p in PRESETS.values() if p.key != "custom" and any(
             setting(n) for n in (p.key_env, *p.alt_key_envs))), None)
-        if preset is None and _opt("API_KEY"):
-            raise ValueError("MAILKEEP_LLM_API_KEY is set but MAILKEEP_LLM_PROVIDER is not")
+        generic = _opt("API_KEY")
+        if preset is None and generic:
+            # Base URL given -> any OpenAI-compatible endpoint; else guess from the key.
+            guess = "custom" if _opt("BASE_URL") else _provider_for_key(generic)
+            if not guess:
+                raise ValueError(
+                    "MAILKEEP_LLM_API_KEY is set but MAILKEEP_LLM_PROVIDER is not; "
+                    f"set it to one of {', '.join(PRESETS)}"
+                )
+            preset = PRESETS[guess]
+        if preset is None:
+            preset = next((p for p in PRESETS.values() if p.key != "custom"
+                           and _key_by_prefix(p.key)), None)
         if preset is None:
             return None
+    base_url = _opt("BASE_URL") or preset.base_url
+    if not base_url and preset.key == "custom":
+        # OPENAI_BASE_URL is the conventional name for a proxied endpoint.
+        base_url = setting("OPENAI_BASE_URL")
+    if not base_url and preset.key == "custom":
+        base_url = _inferred_base_url(_api_key(preset))
     preset = replace(
         preset,
         model=_opt("MODEL") or preset.model,
-        base_url=_opt("BASE_URL") or preset.base_url,
+        base_url=base_url,
+        timeout_seconds=_timeout(preset.timeout_seconds),
     )
     if not preset.model:
         raise ValueError(f"{preset.label}: set MAILKEEP_LLM_MODEL")
     if not preset.base_url:
-        raise ValueError(f"{preset.label}: set MAILKEEP_LLM_BASE_URL")
+        raise ValueError(
+            f"{preset.label}: set MAILKEEP_LLM_BASE_URL (the OpenAI-compatible "
+            "endpoint ending in /v1, e.g. https://integrate.api.nvidia.com/v1)"
+        )
     return preset
 
 
@@ -152,7 +231,10 @@ def export_key(preset: Preset) -> bool:
     return bool(value)
 
 
-def write_config(preset: Preset, path: Path = GENERATED_CONFIG) -> Path:
+def write_config(preset: Preset, path: Path | None = None) -> Path:
+    # Resolve the default at call time: the module global is what tests and
+    # embedders override, and a bound default silently ignored it.
+    path = path or GENERATED_CONFIG
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(build_config(preset), indent=2), encoding="utf-8")
     return path
@@ -169,9 +251,10 @@ def describe() -> list[str]:
     if preset is None:
         return lines + ["LLM: none (no MAILKEEP_LLM_PROVIDER and no provider API key found)"]
     key = _api_key(preset)
+    names = list(dict.fromkeys(("MAILKEEP_LLM_API_KEY", preset.key_env, *preset.alt_key_envs)))
     lines.append(f"LLM provider: {preset.label}  model: {preset.model}  base_url: {preset.base_url}")
     lines.append(
         f"LLM api key: {'present (' + str(len(key)) + ' chars)' if key else 'MISSING'}"
-        f"  (MAILKEEP_LLM_API_KEY or {preset.key_env})"
+        f"  ({' or '.join(names)})"
     )
     return lines

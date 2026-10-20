@@ -181,9 +181,13 @@ def resolve_mode() -> tuple[str, str]:
     # the env files too; before, a key in .env never reached OpenMinion.
     known = llm.by_name(provider)
     if known is not None and not llm.export_key(known):
+        from .config import env_files
+
+        found = [str(p) for p in env_files() if p.is_file()]
         return "rules", (
-            f"OpenMinion provider '{provider}' needs {known.key_env}, which is not set in the "
-            "environment or in .env / .openminion/gmail.env / scripts/gmail.env"
+            f"OpenMinion provider '{provider}' needs {known.key_env} or MAILKEEP_LLM_API_KEY. "
+            "Set MAILKEEP_LLM_PROVIDER / MAILKEEP_LLM_MODEL / MAILKEEP_LLM_API_KEY in "
+            ".openminion/gmail.env. Env files read: " + (", ".join(found) or "none found")
         )
     return "openminion", f"OpenMinion provider '{provider}'"
 
@@ -232,8 +236,6 @@ class MailkeepAgent:
         return self._agent_turn(text)
 
     def _agent_turn(self, text: str) -> Outcome:
-        from openminion import ProviderError, TurnTimeoutError
-
         outcomes: list[Outcome] = []
         reply = ""
         with _TURN_LOCK:
@@ -305,7 +307,14 @@ class MailkeepAgent:
                         "Please review the request above and press Approve or Cancel."
                         if self.session.approval else ""
                     )
-            except (ProviderError, TurnTimeoutError) as exc:
+            except Exception as exc:
+                # Import only on failure: resolving these lazy exports loads the
+                # whole api.turns graph (~5 s cold), which used to happen before
+                # every turn and made Ctrl+C unresponsive during startup.
+                from openminion import ProviderError, TurnTimeoutError
+
+                if not isinstance(exc, (ProviderError, TurnTimeoutError)):
+                    raise
                 why = (f"Model provider failed ({exc.code}): {exc.message}"
                        if isinstance(exc, ProviderError) else f"Agent turn timed out ({exc})")
                 trace("error", why)

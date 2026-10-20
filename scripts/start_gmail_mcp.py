@@ -28,19 +28,13 @@ CREDENTIALS_DIR = ROOT / ".openminion" / "gmail" / "credentials"
 DEFAULT_PORT = "8001"
 
 
-def _load_env_file(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    if not path.is_file():
-        return values
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        if key:
-            values[key] = value.strip().strip('"').strip("'")
-    return values
+def _load_env_values() -> dict[str, str]:
+    """Same files and parser as Mailkeep itself (BOM/UTF-16/comments, every
+    location in mailkeep.config.env_files()), so both always agree."""
+    sys.path.insert(0, str(ROOT))
+    from mailkeep import config
+
+    return config.env_values()
 
 
 def main(argv: list[str]) -> int:
@@ -53,7 +47,7 @@ def main(argv: list[str]) -> int:
         return 1
 
     env = dict(os.environ)
-    env.update(_load_env_file(ENV_FILE))
+    env.update(_load_env_values())
     env.setdefault("WORKSPACE_MCP_PORT", DEFAULT_PORT)
     env.setdefault("WORKSPACE_MCP_CREDENTIALS_DIR", str(CREDENTIALS_DIR))
     # Local http:// development endpoint for the OAuth callback.

@@ -478,6 +478,37 @@ Documented, but the name misleads. Real streaming is
 
 ## 7. Session log
 
+### 2026-10-20 — provider-failure fallback covered by tests
+- Added `tests/test_fallback.py` (4 cases): `ProviderError` → rule-parser answer
+  with the provider code/message shown, `TurnTimeoutError` → same, other
+  exceptions still propagate, and no rule-parser re-run while a write approval
+  is pending. The tests replace `_agent.run_stream` with a raising stub, so they
+  need no network or credentials.
+- Verified: `tests` → **92 passed** (88 before + 4 new).
+
+### 2026-10-19 — custom LLM provider aborted before any request
+- **Symptom:** `MAILKEEP_LLM_PROVIDER=custom` never contacted the endpoint and
+  the UI fell back to the rule parser. No provider error, no HTTP request.
+- **Root cause:** the user's `gmail.env` had `MAILKEEP_LLM_PROVIDER=custom`,
+  `MAILKEEP_LLM_API_KEY=nvapi-...`, and a NVIDIA model, but no
+  `MAILKEEP_LLM_BASE_URL`. `llm.selected()` raised `set MAILKEEP_LLM_BASE_URL`,
+  which `resolve_mode()` caught and turned into `mode=rules` — so the OpenMinion
+  agent was never constructed.
+- **Fix:** add an `nvidia` preset (slot `openai`,
+  `https://integrate.api.nvidia.com/v1`, `NVIDIA_API_KEY`); infer the base URL
+  for `custom` from an unambiguous key prefix (`nvapi-`, `AIza`, `sk-or-`),
+  never from a bare `sk-`; accept `OPENAI_BASE_URL` as a `custom` alias; keep
+  the explicit error when inference is impossible.
+- **Related:** `write_config()` now resolves `GENERATED_CONFIG` at call time
+  (tests monkeypatched the global but a bound default ignored it).
+- **Related:** moved `from openminion import ProviderError, TurnTimeoutError`
+  to the failure path — the lazy export cost ~5 s cold before every turn and
+  made Ctrl+C/cancel unresponsive during startup.
+- Verified: `tests` → **88 passed**; end-to-end custom endpoint turn replies.
+- Note: NVIDIA's `deepseek-ai/deepseek-v4.1-flash` accepts `/v1/models` but did
+  not return chat headers within 150 s from this machine; that is upstream
+  capacity/model latency, not the provider wiring (which now sends requests).
+
 ### 2026-10-19 — three spec skills authored in the verified recipe format
 - Added `skills/email-triage`, `skills/email-draft`, `skills/email-organize`
   from the skill spec, but **rewritten into OpenMinion's real format** rather

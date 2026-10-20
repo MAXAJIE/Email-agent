@@ -47,9 +47,15 @@ exactly like the live app.
 ## Connect Gmail
 
 The OAuth client is a Google Cloud *Desktop app* client. Its ID and secret are
-read from `.openminion/gmail.env` first, then `scripts/gmail.env` (both
-gitignored; template: `scripts/gmail.env.example`). The Gmail API must be
-enabled in the same Google Cloud project.
+read from `.openminion/gmail.env` first, then `scripts/gmail.env`, then
+`gmail.env` in the project root (all gitignored; template:
+`scripts/gmail.env.example`). Set `MAILKEEP_ENV_FILE=/path/to/file` to use any
+other location. The same file picks the AI model: `MAILKEEP_LLM_PROVIDER`
+(`openrouter`, `gemini`, `portal`, `openai`, `nvidia`, or `custom`),
+`MAILKEEP_LLM_MODEL`, `MAILKEEP_LLM_API_KEY` (optional `MAILKEEP_LLM_BASE_URL`,
+`MAILKEEP_LLM_TIMEOUT`). For `custom`, the base URL is inferred from a
+recognised key (e.g. an NVIDIA `nvapi-` key) or from `OPENAI_BASE_URL`. The
+Gmail API must be enabled in the same Google Cloud project.
 
 ```
 .venv\Scripts\python.exe -m mailkeep login

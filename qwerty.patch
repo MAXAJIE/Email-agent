@@ -1,357 +1,390 @@
+diff --git a/.gitignore b/.gitignore
+index 33b7d71..c95b66f 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -7,6 +7,11 @@ __pycache__/
+ 
+ # Local Gmail OAuth client values (template: scripts/gmail.env.example).
+ scripts/gmail.env
++scripts/gmail.env.txt
++/gmail.env
++/gmail.env.txt
++.env
++.env.txt
+ 
+ # SDK probe scratch (sqlite state) and IDE files; never commit.
+ .tmp-sdk/
+diff --git a/README.md b/README.md
+index cdac355..ad22629 100644
+--- a/README.md
++++ b/README.md
+@@ -47,8 +47,12 @@ exactly like the live app.
+ ## Connect Gmail
+ 
+ The OAuth client is a Google Cloud *Desktop app* client. Its ID and secret are
+-read from `.openminion/gmail.env` first, then `scripts/gmail.env` (both
+-gitignored; template: `scripts/gmail.env.example`). The Gmail API must be
++read from `.openminion/gmail.env` first, then `scripts/gmail.env`, then
++`gmail.env` in the project root (all gitignored; template:
++`scripts/gmail.env.example`). Set `MAILKEEP_ENV_FILE=/path/to/file` to use any
++other location. The same file picks the AI model: `MAILKEEP_LLM_PROVIDER`,
++`MAILKEEP_LLM_MODEL`, `MAILKEEP_LLM_API_KEY` (optional `MAILKEEP_LLM_BASE_URL`,
++`MAILKEEP_LLM_TIMEOUT`). The Gmail API must be
+ enabled in the same Google Cloud project.
+ 
+ ```
+diff --git a/mailkeep/agent.py b/mailkeep/agent.py
+index f7c037f..436ac82 100644
+--- a/mailkeep/agent.py
++++ b/mailkeep/agent.py
+@@ -181,9 +181,13 @@ def resolve_mode() -> tuple[str, str]:
+     # the env files too; before, a key in .env never reached OpenMinion.
+     known = llm.by_name(provider)
+     if known is not None and not llm.export_key(known):
++        from .config import env_files
++
++        found = [str(p) for p in env_files() if p.is_file()]
+         return "rules", (
+-            f"OpenMinion provider '{provider}' needs {known.key_env}, which is not set in the "
+-            "environment or in .env / .openminion/gmail.env / scripts/gmail.env"
++            f"OpenMinion provider '{provider}' needs {known.key_env} or MAILKEEP_LLM_API_KEY. "
++            "Set MAILKEEP_LLM_PROVIDER / MAILKEEP_LLM_MODEL / MAILKEEP_LLM_API_KEY in "
++            ".openminion/gmail.env. Env files read: " + (", ".join(found) or "none found")
+         )
+     return "openminion", f"OpenMinion provider '{provider}'"
+ 
+diff --git a/mailkeep/config.py b/mailkeep/config.py
+index 10ea53b..5c130c3 100644
 --- a/mailkeep/config.py
 +++ b/mailkeep/config.py
-@@ -15,6 +15,9 @@
- # Accepted as a fallback so `scripts/gmail.env` works too (the documented copy
- # target). The canonical location stays `.openminion/gmail.env`.
- FALLBACK_ENV_FILE = ROOT / "scripts" / "gmail.env"
-+# Plain `.env` files are read too (project root first): many users keep their
-+# provider key there, and before this it was silently ignored.
-+DOTENV_FILES = (ROOT / ".env", ROOT / ".openminion" / ".env", ROOT / "scripts" / ".env")
+@@ -18,6 +18,14 @@ FALLBACK_ENV_FILE = ROOT / "scripts" / "gmail.env"
+ # Plain `.env` files are read too (project root first): many users keep their
+ # provider key there, and before this it was silently ignored.
+ DOTENV_FILES = (ROOT / ".env", ROOT / ".openminion" / ".env", ROOT / "scripts" / ".env")
++# Where people actually drop gmail.env when following the example: the project
++# root, or with a hidden ".txt" from Windows Notepad. All are read, in order.
++EXTRA_ENV_FILES = (
++    ROOT / "gmail.env",
++    ROOT / ".openminion" / "gmail.env.txt",
++    ROOT / "scripts" / "gmail.env.txt",
++    ROOT / "gmail.env.txt",
++)
  TOKEN_DIR = ROOT / ".openminion" / "gmail" / "credentials"
  TOKEN_FILE = TOKEN_DIR / "mailkeep-token.json"
  # Client JSON downloaded from Google Cloud Console. Its top-level key
-@@ -85,30 +88,53 @@
- 
- 
- def load_env_file(path: Path = ENV_FILE) -> dict[str, str]:
--    """Read a simple KEY=VALUE file without touching the process environment."""
-+    """Read a simple KEY=VALUE file without touching the process environment.
-+
-+    Tolerates what real-world Windows/.env files contain: a UTF-8 BOM (Notepad),
-+    UTF-16, `export KEY=...`, spaces around `=`, quotes, and trailing
-+    `# comments` on unquoted values.
-+    """
-     values: dict[str, str] = {}
-     if not path.is_file():
-         return values
--    for raw_line in path.read_text(encoding="utf-8").splitlines():
--        line = raw_line.strip()
-+    raw = path.read_bytes()
-+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
-+        text = raw.decode("utf-16")
-+    else:
-+        text = raw.decode("utf-8-sig", errors="replace")
-+    for raw_line in text.splitlines():
-+        line = raw_line.strip().lstrip("\ufeff")
-         if not line or line.startswith("#") or "=" not in line:
-             continue
-+        if line.startswith("export "):
-+            line = line[len("export "):].strip()
+@@ -111,7 +119,12 @@ def load_env_file(path: Path = ENV_FILE) -> dict[str, str]:
          key, _, value = line.partition("=")
          key = key.strip()
-+        value = value.strip()
-+        if value[:1] in {'"', "'"} and value[1:].find(value[0]) != -1:
-+            value = value[1 : 1 + value[1:].find(value[0])]
-+        else:
-+            value = value.split(" #", 1)[0].split("\t#", 1)[0].strip()
-         if key:
--            values[key] = value.strip().strip('"').strip("'")
-+            values[key] = value
-     return values
+         value = value.strip()
+-        if value[:1] in {'"', "'"} and value[1:].find(value[0]) != -1:
++        if value.startswith("#"):
++            # `KEY=   # comment` means empty, not the comment text. Before, the
++            # example's `MAILKEEP_LLM_API_KEY=  # or OPENROUTER_API_KEY` line
++            # became a bogus key that hid the real one.
++            value = ""
++        elif value[:1] in {'"', "'"} and value[1:].find(value[0]) != -1:
+             value = value[1 : 1 + value[1:].find(value[0])]
+         else:
+             value = value.split(" #", 1)[0].split("\t#", 1)[0].strip()
+@@ -121,8 +134,33 @@ def load_env_file(path: Path = ENV_FILE) -> dict[str, str]:
  
  
-+def env_files() -> tuple[Path, ...]:
-+    """Every file `setting()` reads, in priority order."""
-+    return (ENV_FILE, FALLBACK_ENV_FILE, *DOTENV_FILES)
+ def env_files() -> tuple[Path, ...]:
+-    """Every file `setting()` reads, in priority order."""
+-    return (ENV_FILE, FALLBACK_ENV_FILE, *DOTENV_FILES)
++    """Every file `setting()` reads, in priority order.
++
++    MAILKEEP_ENV_FILE (process environment only) points at any other file and
++    is read first, so a launcher or another machine can keep it elsewhere.
++    """
++    files: list[Path] = []
++    custom = os.environ.get("MAILKEEP_ENV_FILE", "").strip()
++    if custom:
++        files.append(Path(custom).expanduser())
++    files += [ENV_FILE, FALLBACK_ENV_FILE, *EXTRA_ENV_FILES, *DOTENV_FILES]
++    seen: set[Path] = set()
++    unique = []
++    for f in files:
++        if f not in seen:
++            seen.add(f)
++            unique.append(f)
++    return tuple(unique)
 +
 +
- def setting(name: str) -> str:
--    """Process environment wins, then the project env files."""
-+    """Process environment wins, then the project env files (see env_files())."""
-     value = os.environ.get(name, "").strip()
-     if value:
-         return value
--    value = load_env_file().get(name, "").strip()
--    if value:
--        return value
--    return load_env_file(FALLBACK_ENV_FILE).get(name, "").strip()
++def env_values() -> dict[str, str]:
++    """Merged view of all env files (earlier files win). Values are secrets."""
++    merged: dict[str, str] = {}
 +    for path in env_files():
-+        value = load_env_file(path).get(name, "").strip()
-+        if value:
-+            return value
-+    return ""
++        for key, value in load_env_file(path).items():
++            if value and key not in merged:
++                merged[key] = value
++    return merged
  
  
- def _client_file_section() -> tuple[str, dict] | None:
+ def setting(name: str) -> str:
+diff --git a/mailkeep/llm.py b/mailkeep/llm.py
+index 15d5cb6..020c1d5 100644
 --- a/mailkeep/llm.py
 +++ b/mailkeep/llm.py
-@@ -28,7 +28,7 @@
+@@ -6,6 +6,7 @@ Everything is configured in `.openminion/gmail.env`; nothing else to edit:
+     MAILKEEP_LLM_MODEL=openai/gpt-4.1-mini
+     MAILKEEP_LLM_API_KEY=sk-or-...      # or the provider's own name (OPENROUTER_API_KEY, ...)
+     MAILKEEP_LLM_BASE_URL=              # optional; required for "custom"
++    MAILKEEP_LLM_TIMEOUT=120            # optional; seconds per model call
+ 
+ Short aliases LLM_PROVIDER / LLM_MODEL / LLM_API_KEY / LLM_BASE_URL also work.
+ Without MAILKEEP_LLM_PROVIDER the first provider whose key is present wins
+@@ -28,7 +29,7 @@ import os
  from dataclasses import dataclass, replace
  from pathlib import Path
  
--from .config import ENV_FILE, FALLBACK_ENV_FILE, ROOT, setting
-+from .config import ROOT, env_files, setting
+-from .config import ROOT, env_files, setting
++from .config import ROOT, env_files, env_values, setting
  
  GENERATED_CONFIG = ROOT / ".openminion" / "mailkeep-agent.json"
  
-@@ -42,6 +42,8 @@
-     key_env: str
-     model: str
-     timeout_seconds: int = 120
-+    # Other spellings people use for the same key.
-+    alt_key_envs: tuple[str, ...] = ()
- 
- 
- PRESETS: dict[str, Preset] = {
-@@ -49,11 +51,13 @@
-     "openrouter": Preset(
-         "openrouter", "OpenRouter", "openrouter", "https://openrouter.ai/api/v1",
-         "OPENROUTER_API_KEY", "openai/gpt-4.1-mini",
-+        alt_key_envs=("OPENROUTER_KEY", "OPEN_ROUTER_API_KEY", "OPENROUTER_TOKEN"),
+@@ -74,6 +75,19 @@ PRESETS: dict[str, Preset] = {
      ),
-     "gemini": Preset(
-         "gemini", "Gemini", "openai",
-         "https://generativelanguage.googleapis.com/v1beta/openai/",
-         "GEMINI_API_KEY", "gemini-2.5-flash",
-+        alt_key_envs=("GOOGLE_API_KEY",),
-     ),
-     "portal": Preset(
-         "portal", "Cortensor Portal", "openai", "https://api.cortensor.app/v1",
-@@ -78,7 +82,16 @@
- 
- 
- def _api_key(preset: Preset) -> str:
--    return _opt("API_KEY") or setting(preset.key_env)
-+    value = _opt("API_KEY") or setting(preset.key_env)
-+    for name in preset.alt_key_envs:
-+        value = value or setting(name)
-+    return value
+ }
+ ALIASES = {"cortensor": "portal", "google": "gemini", "or": "openrouter"}
++# Recognisable key shapes, most specific first. Used when the provider is not
++# named, so a key alone (under any variable name) still selects its provider.
++KEY_PREFIXES = (("sk-or-", "openrouter"), ("AIza", "gemini"), ("sk-", "openai"))
 +
 +
-+def by_name(name: str) -> Preset | None:
-+    """Preset for an OpenMinion provider name taken from the user's agents.json."""
-+    name = ALIASES.get(name.strip().lower(), name.strip().lower())
-+    return PRESETS.get(name)
++def _provider_for_key(value: str) -> str:
++    return next((name for prefix, name in KEY_PREFIXES if value.startswith(prefix)), "")
++
++
++def _key_by_prefix(provider: str) -> str:
++    """A value in the process env or env files that looks like `provider`'s key."""
++    candidates = list(env_values().values()) + list(os.environ.values())
++    return next((v.strip() for v in candidates if _provider_for_key(v.strip()) == provider), "")
  
  
- def selected() -> Preset | None:
-@@ -92,7 +105,8 @@
-             )
-         preset = PRESETS[key]
+ def _opt(name: str) -> str:
+@@ -85,9 +99,20 @@ def _api_key(preset: Preset) -> str:
+     value = _opt("API_KEY") or setting(preset.key_env)
+     for name in preset.alt_key_envs:
+         value = value or setting(name)
++    if not value and preset.key != "custom":
++        value = _key_by_prefix(preset.key)
+     return value
+ 
+ 
++def _timeout(default: int) -> int:
++    raw = _opt("TIMEOUT").strip()
++    try:
++        value = int(float(raw)) if raw else default
++    except ValueError:
++        raise ValueError(f"MAILKEEP_LLM_TIMEOUT={raw!r} is not a number of seconds") from None
++    return value if value > 0 else default
++
++
+ def by_name(name: str) -> Preset | None:
+     """Preset for an OpenMinion provider name taken from the user's agents.json."""
+     name = ALIASES.get(name.strip().lower(), name.strip().lower())
+@@ -107,14 +132,26 @@ def selected() -> Preset | None:
      else:
--        preset = next((p for p in PRESETS.values() if setting(p.key_env)), None)
-+        preset = next((p for p in PRESETS.values() if p.key != "custom" and any(
-+            setting(n) for n in (p.key_env, *p.alt_key_envs))), None)
-         if preset is None and _opt("API_KEY"):
-             raise ValueError("MAILKEEP_LLM_API_KEY is set but MAILKEEP_LLM_PROVIDER is not")
+         preset = next((p for p in PRESETS.values() if p.key != "custom" and any(
+             setting(n) for n in (p.key_env, *p.alt_key_envs))), None)
+-        if preset is None and _opt("API_KEY"):
+-            raise ValueError("MAILKEEP_LLM_API_KEY is set but MAILKEEP_LLM_PROVIDER is not")
++        generic = _opt("API_KEY")
++        if preset is None and generic:
++            # Base URL given -> any OpenAI-compatible endpoint; else guess from the key.
++            guess = "custom" if _opt("BASE_URL") else _provider_for_key(generic)
++            if not guess:
++                raise ValueError(
++                    "MAILKEEP_LLM_API_KEY is set but MAILKEEP_LLM_PROVIDER is not; "
++                    f"set it to one of {', '.join(PRESETS)}"
++                )
++            preset = PRESETS[guess]
++        if preset is None:
++            preset = next((p for p in PRESETS.values() if p.key != "custom"
++                           and _key_by_prefix(p.key)), None)
          if preset is None:
-@@ -146,7 +160,7 @@
+             return None
+     preset = replace(
+         preset,
+         model=_opt("MODEL") or preset.model,
+         base_url=_opt("BASE_URL") or preset.base_url,
++        timeout_seconds=_timeout(preset.timeout_seconds),
+     )
+     if not preset.model:
+         raise ValueError(f"{preset.label}: set MAILKEEP_LLM_MODEL")
+diff --git a/scripts/gmail.env.example b/scripts/gmail.env.example
+index 65e510f..743a320 100644
+--- a/scripts/gmail.env.example
++++ b/scripts/gmail.env.example
+@@ -1,4 +1,6 @@
+ # Copy to ../.openminion/gmail.env (gitignored) and fill in.
++# Also read: scripts/gmail.env, <project>/gmail.env, *.env.txt variants, .env,
++# or any path given in the MAILKEEP_ENV_FILE environment variable.
+ #
+ # Google Cloud Console -> APIs & Services -> Credentials -> Create credentials
+ # -> OAuth client ID -> "Desktop app". Enable the Gmail API in the same project.
+@@ -18,10 +20,17 @@ GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
  
- def describe() -> list[str]:
-     """Startup diagnostics. Never prints a key, only whether one was found."""
--    files = [f"{p} ({'found' if p.is_file() else 'missing'})" for p in (ENV_FILE, FALLBACK_ENV_FILE)]
-+    files = [f"{p} ({'found' if p.is_file() else 'missing'})" for p in env_files()]
-     lines = ["env files: " + "; ".join(files)]
-     try:
-         preset = selected()
---- a/mailkeep/agent.py
-+++ b/mailkeep/agent.py
-@@ -176,6 +176,15 @@
-         return "rules", f"no OpenMinion config at {config_path()}"
-     if provider == "echo":
-         return "rules", "OpenMinion provider is 'echo' (no model, no tool calls)"
-+    # The user's own agents.json names a provider (e.g. openrouter). OpenMinion
-+    # only reads its key from the process environment, so copy it there from
-+    # the env files too; before, a key in .env never reached OpenMinion.
-+    known = llm.by_name(provider)
-+    if known is not None and not llm.export_key(known):
-+        return "rules", (
-+            f"OpenMinion provider '{provider}' needs {known.key_env}, which is not set in the "
-+            "environment or in .env / .openminion/gmail.env / scripts/gmail.env"
-+        )
-     return "openminion", f"OpenMinion provider '{provider}'"
+ # --- AI agent (OpenMinion) ----------------------------------------------
+ # Pick provider, model and key here; Mailkeep generates the OpenMinion config.
+-MAILKEEP_LLM_PROVIDER=openrouter        # openrouter | gemini | portal | openai | custom
+-MAILKEEP_LLM_MODEL=openai/gpt-4.1-mini  # any model id the provider offers
+-MAILKEEP_LLM_API_KEY=                   # or OPENROUTER_API_KEY / GEMINI_API_KEY / CORTENSOR_API_KEY
+-# MAILKEEP_LLM_BASE_URL=                # only for "custom" or a proxy
++# These three lines decide which model the agent uses; nothing else is hardcoded.
++# Provider: openrouter | gemini | portal | openai | custom
++MAILKEEP_LLM_PROVIDER=openrouter
++# Model: any model id the provider offers
++MAILKEEP_LLM_MODEL=openai/gpt-4.1-mini
++# Key: or OPENROUTER_API_KEY / GEMINI_API_KEY / CORTENSOR_API_KEY / OPENAI_API_KEY
++MAILKEEP_LLM_API_KEY=
++# Base URL: only for "custom" (any OpenAI-compatible endpoint) or a proxy
++# MAILKEEP_LLM_BASE_URL=
++# Seconds per model call (default 120, portal 480)
++# MAILKEEP_LLM_TIMEOUT=120
+ # MAILKEEP_TRACE=0                      # hide the thinking process in the console
+ 
+ # --- Fix for "Error 403: access_denied" ---------------------------------
+diff --git a/scripts/start_gmail_mcp.py b/scripts/start_gmail_mcp.py
+index a593fed..d9e07ba 100644
+--- a/scripts/start_gmail_mcp.py
++++ b/scripts/start_gmail_mcp.py
+@@ -28,19 +28,13 @@ CREDENTIALS_DIR = ROOT / ".openminion" / "gmail" / "credentials"
+ DEFAULT_PORT = "8001"
  
  
-@@ -194,6 +203,8 @@
-             print(f"[mailkeep] {line}", file=sys.stderr, flush=True)
-         print(f"[mailkeep] chat mode: {self.mode} - {self.reason}", file=sys.stderr, flush=True)
-         self._agent = None
-+        self._cancel = threading.Event()
-+        self._busy = threading.Event()
-         self._turn = 0
-         self._history: list[tuple[str, str]] = []
+-def _load_env_file(path: Path) -> dict[str, str]:
+-    values: dict[str, str] = {}
+-    if not path.is_file():
+-        return values
+-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+-        line = raw_line.strip()
+-        if not line or line.startswith("#") or "=" not in line:
+-            continue
+-        key, _, value = line.partition("=")
+-        key = key.strip()
+-        if key:
+-            values[key] = value.strip().strip('"').strip("'")
+-    return values
++def _load_env_values() -> dict[str, str]:
++    """Same files and parser as Mailkeep itself (BOM/UTF-16/comments, every
++    location in mailkeep.config.env_files()), so both always agree."""
++    sys.path.insert(0, str(ROOT))
++    from mailkeep import config
++
++    return config.env_values()
  
-@@ -243,14 +254,45 @@
-                     except Exception:  # tracing must never break a turn
-                         pass
  
--                result = self._ensure_agent().run_stream(
--                    self._with_history(text),
--                    on_delta=on_delta,
--                    session_id=f"{self.session_id}-{self._turn}",
--                    timeout_seconds=float(setting("MAILKEEP_AGENT_TIMEOUT") or 180),
--                    # Only our own tool may run; it gates writes itself.
--                    approval_callback=lambda name, _args, _id: name == "mailkeep_command",
--                )
-+                agent = self._ensure_agent()
-+                box: dict[str, object] = {}
-+
-+                def work() -> None:
-+                    try:
-+                        box["result"] = agent.run_stream(
-+                            self._with_history(text),
-+                            on_delta=on_delta,
-+                            session_id=f"{self.session_id}-{self._turn}",
-+                            timeout_seconds=float(setting("MAILKEEP_AGENT_TIMEOUT") or 180),
-+                            # Only our own tool may run; it gates writes itself.
-+                            approval_callback=lambda name, _args, _id: (
-+                                name == "mailkeep_command" and not self._cancel.is_set()
-+                            ),
-+                        )
-+                    except BaseException as exc:  # re-raised on the caller's thread
-+                        box["error"] = exc
-+
-+                self._cancel.clear()
-+                self._busy.set()
-+                worker = threading.Thread(target=work, name="mailkeep-turn", daemon=True)
-+                worker.start()
-+                try:
-+                    # Short waits keep Ctrl+C / cancel() responsive (also on Windows).
-+                    while worker.is_alive() and not self._cancel.is_set():
-+                        worker.join(0.2)
-+                except KeyboardInterrupt:
-+                    self._cancel.set()
-+                finally:
-+                    self._busy.clear()
-+                if self._cancel.is_set():
-+                    trace("abort", "stopped by user (Ctrl+C); conversation reset")
-+                    self._abandon(agent)
-+                    self._history = []
-+                    return Outcome([Response("Stopped. That conversation was aborted.")],
-+                                   self.session.approval)
-+                if "error" in box:
-+                    raise box["error"]  # type: ignore[misc]
-+                result = box["result"]
-                 reply = result.text.strip()
-                 trace("reply", f"{reply}\n({time.monotonic() - started:.1f}s, stats={result.stats})")
-                 # The runtime prefixes replies with the agent profile name.
-@@ -280,6 +322,28 @@
-             responses.append(Response(reply))
-         return Outcome(responses, self.session.approval)
+ def main(argv: list[str]) -> int:
+@@ -53,7 +47,7 @@ def main(argv: list[str]) -> int:
+         return 1
  
-+    def cancel(self) -> bool:
-+        """Abort the turn in progress. True if one was running."""
-+        if not self._busy.is_set():
-+            return False
-+        self._cancel.set()
-+        return True
-+
-+    def _abandon(self, agent) -> None:
-+        """Drop the agent whose turn was aborted; a fresh one serves the next turn.
-+        The orphaned run can no longer touch the mailbox: _ACTIVE is cleared and
-+        the approval callback refuses tools once cancelled."""
-+        if self._agent is agent:
-+            self._agent = None
-+
-+        def close() -> None:
-+            try:
-+                agent.close()
-+            except Exception:
-+                pass
-+
-+        threading.Thread(target=close, daemon=True).start()
-+
-     def _with_history(self, text: str) -> str:
-         if not self._history:
-             return text
---- a/mailkeep/web.py
-+++ b/mailkeep/web.py
-@@ -255,11 +255,22 @@
-     print(f"OAuth redirect URI (register only for Web clients): {ui_redirect_uri(port)}")
-     if open_browser:
-         threading.Timer(0.4, open_window, args=(url,)).start()
-+    runner = threading.Thread(target=server.serve_forever, name="mailkeep-http", daemon=True)
-+    runner.start()
-     try:
--        server.serve_forever()
--    except KeyboardInterrupt:
--        pass
-+        while runner.is_alive():
-+            try:
-+                runner.join(0.5)
-+            except KeyboardInterrupt:
-+                # Ctrl+C while the agent is thinking stops that turn only;
-+                # Ctrl+C while idle quits the app.
-+                if app.agent is not None and app.agent.cancel():
-+                    print("\n[mailkeep] Ctrl+C: stopped the agent; conversation aborted. "
-+                          "Press Ctrl+C again (while idle) to quit.", flush=True)
-+                    continue
-+                break
-     finally:
-+        server.shutdown()
-         server.server_close()
-         if app.agent:
-             app.agent.close()
+     env = dict(os.environ)
+-    env.update(_load_env_file(ENV_FILE))
++    env.update(_load_env_values())
+     env.setdefault("WORKSPACE_MCP_PORT", DEFAULT_PORT)
+     env.setdefault("WORKSPACE_MCP_CREDENTIALS_DIR", str(CREDENTIALS_DIR))
+     # Local http:// development endpoint for the OAuth callback.
+diff --git a/tests/test_env_key.py b/tests/test_env_key.py
+index b6fc6ec..6f2787b 100644
 --- a/tests/test_env_key.py
 +++ b/tests/test_env_key.py
-@@ -0,0 +1,40 @@
-+"""The provider key must be found in .env, even with Windows file quirks."""
-+import importlib
+@@ -14,6 +14,8 @@ def envdir(tmp_path, monkeypatch):
+     dot = tmp_path / ".env"
+     monkeypatch.setattr(config, "ENV_FILE", tmp_path / "missing1")
+     monkeypatch.setattr(config, "FALLBACK_ENV_FILE", tmp_path / "missing2")
++    monkeypatch.setattr(config, "EXTRA_ENV_FILES", ())
++    monkeypatch.delenv("MAILKEEP_ENV_FILE", raising=False)
+     monkeypatch.setattr(config, "DOTENV_FILES", (dot,))
+     return dot
+ 
+diff --git a/tests/test_fixes.py b/tests/test_fixes.py
+index 4a604ec..067ea31 100644
+--- a/tests/test_fixes.py
++++ b/tests/test_fixes.py
+@@ -15,6 +15,7 @@ def env_only_client(monkeypatch, tmp_path):
+     monkeypatch.setattr(config, "CLIENT_TYPE_FILE", tmp_path / "client_type")
+     monkeypatch.setattr(config, "ENV_FILE", tmp_path / "gmail.env")
+     monkeypatch.setattr(config, "FALLBACK_ENV_FILE", tmp_path / "gmail2.env")
++    monkeypatch.setattr(config, "EXTRA_ENV_FILES", ())
+     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "x.apps.googleusercontent.com")
+     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "s")
+     monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_TYPE", raising=False)
+diff --git a/tests/test_env_llm.py b/tests/test_env_llm.py
+new file mode 100644
+index 0000000..d2fdf0f
+--- /dev/null
++++ b/tests/test_env_llm.py
+@@ -0,0 +1,71 @@
++"""Provider, model, key and timeout come from gmail.env, not from presets."""
++import json
++import os
 +
 +import pytest
 +
-+from mailkeep import config, llm
++from mailkeep import agent, config, llm
++
++KEYS = ("OPENROUTER_API_KEY", "OPENROUTER_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
++        "CORTENSOR_API_KEY", "OPENAI_API_KEY", "MAILKEEP_ENV_FILE")
 +
 +
 +@pytest.fixture
-+def envdir(tmp_path, monkeypatch):
-+    for k in ("OPENROUTER_API_KEY", "MAILKEEP_LLM_PROVIDER", "MAILKEEP_LLM_API_KEY", "LLM_PROVIDER",
-+              "LLM_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "CORTENSOR_API_KEY", "OPENAI_API_KEY"):
-+        monkeypatch.delenv(k, raising=False)
-+    dot = tmp_path / ".env"
-+    monkeypatch.setattr(config, "ENV_FILE", tmp_path / "missing1")
-+    monkeypatch.setattr(config, "FALLBACK_ENV_FILE", tmp_path / "missing2")
-+    monkeypatch.setattr(config, "DOTENV_FILES", (dot,))
-+    return dot
++def gmail_env(tmp_path, monkeypatch):
++    for k in list(os.environ):
++        if k.startswith(("MAILKEEP_LLM_", "LLM_")) or k in KEYS:
++            monkeypatch.delenv(k, raising=False)
++    env = tmp_path / "gmail.env"
++    monkeypatch.setattr(config, "ENV_FILE", env)
++    monkeypatch.setattr(config, "FALLBACK_ENV_FILE", tmp_path / "none1")
++    monkeypatch.setattr(config, "EXTRA_ENV_FILES", ())
++    monkeypatch.setattr(config, "DOTENV_FILES", ())
++    monkeypatch.setattr(llm, "GENERATED_CONFIG", tmp_path / "agent.json")
++    return env
 +
 +
-+def test_root_dotenv_key_is_used(envdir):
-+    envdir.write_text("OPENROUTER_API_KEY=sk-or-abc\n", encoding="utf-8")
++def test_env_values_drive_generated_config(gmail_env):
++    gmail_env.write_text(
++        "MAILKEEP_LLM_PROVIDER=gemini\nMAILKEEP_LLM_MODEL=gemini-2.5-pro\n"
++        "MAILKEEP_LLM_API_KEY=AIzaTest\nMAILKEEP_LLM_TIMEOUT=300\n", encoding="utf-8")
++    data = json.loads(agent.config_path().read_text(encoding="utf-8"))
++    assert data["agents"]["openminion"]["provider"] == "openai"
++    assert data["providers"]["openai"]["model"] == "gemini-2.5-pro"
++    assert data["providers"]["openai"]["timeout_seconds"] == 300
++    assert os.environ["GEMINI_API_KEY"] == "AIzaTest"
++
++
++def test_comment_after_empty_value_is_not_a_key(gmail_env):
++    gmail_env.write_text(
++        "MAILKEEP_LLM_PROVIDER=openrouter   # pick\n"
++        "MAILKEEP_LLM_API_KEY=              # or OPENROUTER_API_KEY\n"
++        "OPENROUTER_API_KEY=sk-or-real\n", encoding="utf-8")
++    assert config.setting("MAILKEEP_LLM_API_KEY") == ""
++    assert llm._api_key(llm.selected()) == "sk-or-real"
++
++
++def test_custom_endpoint(gmail_env):
++    gmail_env.write_text(
++        "MAILKEEP_LLM_PROVIDER=custom\nMAILKEEP_LLM_MODEL=llama3\n"
++        "MAILKEEP_LLM_BASE_URL=http://localhost:11434/v1\nMAILKEEP_LLM_API_KEY=x\n",
++        encoding="utf-8")
++    p = llm.selected()
++    assert (p.model, p.base_url) == ("llama3", "http://localhost:11434/v1")
++
++
++def test_generic_key_without_provider_is_inferred(gmail_env):
++    gmail_env.write_text("MAILKEEP_LLM_API_KEY=sk-or-v1-abc\n", encoding="utf-8")
 +    assert llm.selected().key == "openrouter"
 +
 +
-+def test_bom_export_and_comment(envdir):
-+    envdir.write_bytes("\ufeffexport OPENROUTER_API_KEY = sk-or-abc  # mine\n".encode("utf-8"))
-+    assert config.setting("OPENROUTER_API_KEY") == "sk-or-abc"
++def test_env_file_override_path(gmail_env, tmp_path, monkeypatch):
++    other = tmp_path / "elsewhere.env"
++    other.write_text("MAILKEEP_LLM_PROVIDER=openai\nMAILKEEP_LLM_MODEL=gpt-x\n", encoding="utf-8")
++    monkeypatch.setenv("MAILKEEP_ENV_FILE", str(other))
++    assert llm.selected().model == "gpt-x"
 +
 +
-+def test_utf16_file(envdir):
-+    envdir.write_text("OPENROUTER_API_KEY=sk-or-abc\n", encoding="utf-16")
-+    assert config.setting("OPENROUTER_API_KEY") == "sk-or-abc"
-+
-+
-+def test_key_exported_for_openminion(envdir, monkeypatch):
-+    envdir.write_text('OPENROUTER_API_KEY="sk-or-abc"\n', encoding="utf-8")
-+    assert llm.export_key(llm.by_name("openrouter"))
-+    import os
-+    assert os.environ["OPENROUTER_API_KEY"] == "sk-or-abc"
---- a/tests/test_cancel.py
-+++ b/tests/test_cancel.py
-@@ -0,0 +1,27 @@
-+"""Ctrl+C / cancel() stops a thinking turn and resets the conversation."""
-+import threading, time
-+
-+from mailkeep import agent as agent_mod
-+from mailkeep.demo import DemoGmailClient
-+from mailkeep.session import Session
-+
-+
-+def test_cancel_aborts_turn(monkeypatch):
-+    openminion = __import__("pytest").importorskip("openminion")
-+    a = agent_mod.MailkeepAgent(Session(DemoGmailClient()))
-+    a.mode = "openminion"
-+
-+    class Slow:
-+        def run_stream(self, *args, **kw):
-+            time.sleep(5)
-+        def close(self):
-+            pass
-+
-+    a._agent = Slow()
-+    a._history = [("old", "reply")]
-+    threading.Timer(0.3, a.cancel).start()
-+    started = time.monotonic()
-+    out = a.chat("how are u")
-+    assert time.monotonic() - started < 2
-+    assert "Stopped" in out.responses[-1].text
-+    assert a._history == [] and a._agent is None
++def test_bad_timeout_is_reported(gmail_env):
++    gmail_env.write_text("MAILKEEP_LLM_PROVIDER=openai\nMAILKEEP_LLM_TIMEOUT=abc\n", encoding="utf-8")
++    with pytest.raises(ValueError):
++        llm.selected()

@@ -9,11 +9,15 @@ from mailkeep import config, llm
 @pytest.fixture
 def envdir(tmp_path, monkeypatch):
     for k in ("OPENROUTER_API_KEY", "MAILKEEP_LLM_PROVIDER", "MAILKEEP_LLM_API_KEY", "LLM_PROVIDER",
-              "LLM_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "CORTENSOR_API_KEY", "OPENAI_API_KEY"):
+              "LLM_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "CORTENSOR_API_KEY", "OPENAI_API_KEY",
+              "NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY", "NIM_API_KEY", "MAILKEEP_LLM_MODEL",
+              "MAILKEEP_LLM_BASE_URL", "OPENAI_BASE_URL"):
         monkeypatch.delenv(k, raising=False)
     dot = tmp_path / ".env"
     monkeypatch.setattr(config, "ENV_FILE", tmp_path / "missing1")
     monkeypatch.setattr(config, "FALLBACK_ENV_FILE", tmp_path / "missing2")
+    monkeypatch.setattr(config, "EXTRA_ENV_FILES", ())
+    monkeypatch.delenv("MAILKEEP_ENV_FILE", raising=False)
     monkeypatch.setattr(config, "DOTENV_FILES", (dot,))
     return dot
 

@@ -15,6 +15,7 @@ def env_only_client(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "CLIENT_TYPE_FILE", tmp_path / "client_type")
     monkeypatch.setattr(config, "ENV_FILE", tmp_path / "gmail.env")
     monkeypatch.setattr(config, "FALLBACK_ENV_FILE", tmp_path / "gmail2.env")
+    monkeypatch.setattr(config, "EXTRA_ENV_FILES", ())
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "x.apps.googleusercontent.com")
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "s")
     monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_TYPE", raising=False)
