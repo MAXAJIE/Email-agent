@@ -74,6 +74,10 @@
   code { font-family: var(--mono); background: var(--raised); padding: 2px 6px; border-radius: 6px; font-size: 13px; }
   a { color: var(--primary); }
   .muted { color: var(--muted); font-size: 13px; }
+  #llm.ok { color: var(--ok, #5fbf8f); }
+  #llm.bad { color: var(--danger); }
+  .action.superseded { opacity: .55; }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
@@ -82,6 +86,7 @@
     <div class="logo">mail<span>keep</span></div>
     <div id="account" class="chip">not connected</div>
     <div id="mode" class="chip" hidden></div>
+    <button id="llm" class="chip" hidden title="Model connection (click to re-check)"></button>
     <div class="spacer"></div>
     <button id="clear" hidden>Clear</button>
     <button id="logout" class="danger" hidden>Disconnect</button>
@@ -218,9 +223,19 @@ function thinking() {
     done: () => { clearInterval(tick); t.remove(); }
   };
 }
+let currentCard = null;
+function supersede() {
+  if (!currentCard) return;
+  currentCard.classList.add("done", "superseded");
+  const row = currentCard.querySelector(".row");
+  if (row) row.replaceWith(el("div", "muted", "Replaced by a newer version below."));
+  currentCard = null;
+}
 function addApproval(a) {
+  supersede();
   pendingApproval = true; lockComposer();
   const card = el("div", "action"), h = el("h3");
+  currentCard = card;
   h.append(icon("lock"), document.createTextNode("Action required"));
   card.append(h, el("div", "q", a.question), el("div", "muted", "Nothing has changed in Gmail yet. Mailkeep never sends mail."));
   const row = el("div", "row"), yes = el("button", "primary"), no = el("button");
@@ -230,21 +245,25 @@ function addApproval(a) {
     yes.disabled = no.disabled = true;
     const ok = await run(() => api("/api/approve", { id: a.id, approve }));
     if (ok) {
-      pendingApproval = false; card.classList.add("done");
+      pendingApproval = false; card.classList.add("done"); if (currentCard === card) currentCard = null;
       row.replaceWith(el("div", "muted", approve ? "Approval processed." : "Cancelled."));
     } else { yes.disabled = no.disabled = false; }
     lockComposer();
   };
   yes.onclick = () => done(true); no.onclick = () => done(false);
   row.append(yes, no); card.append(row); log.append(card); scroll();
+  card.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 function lockComposer() {
-  const locked = busy || pendingApproval;
+  const locked = busy;
   $("send").disabled = locked; $("input").disabled = locked;
   document.querySelectorAll("#suggest button").forEach((b) => (b.disabled = locked));
   const lock = $("lock"); lock.innerHTML = ""; lock.hidden = !locked;
-  if (locked) lock.append(icon("lock"), document.createTextNode(pendingApproval ? "Approve or cancel the request above to continue." : "Mailkeep is working…"));
-  else $("input").focus();
+  if (locked) lock.append(icon("lock"), document.createTextNode("Mailkeep is working…"));
+  else {
+    if (pendingApproval) { lock.hidden = false; lock.append(icon("lock"), document.createTextNode("Approve or cancel the card above, or type how to change the draft.")); }
+    $("input").focus();
+  }
 }
 async function run(call) {
   busy = true; lockComposer(); const t = thinking();
@@ -265,14 +284,14 @@ $("input").oninput = autosize;
 $("form").onsubmit = (e) => {
   e.preventDefault();
   const text = $("input").value.trim();
-  if (!text || busy || pendingApproval) return;
+  if (!text || busy) return;
   $("input").value = ""; autosize(); addUser(text);
   run((t) => chatRequest(text, t));
 };
 $("input").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); } };
 ["find unread emails", "find invoices from last month", "analyze trash", "labels", "help"].forEach((s) => {
   const b = el("button", "", s); b.type = "button";
-  b.onclick = () => { if (!busy && !pendingApproval) { $("input").value = s; $("form").requestSubmit(); } };
+  b.onclick = () => { if (!busy) { $("input").value = s; $("form").requestSubmit(); } };
   $("suggest").append(b);
 });
 $("clear").onclick = () => { if (!busy && !pendingApproval) { log.innerHTML = ""; greet(lastStatus); } };
@@ -348,6 +367,7 @@ async function refresh() {
   $("mode").hidden = !st.mode;
   $("mode").textContent = st.mode === "openminion" ? (st.mode_reason || "OpenMinion agent").replace(" via OpenMinion", "") : "rule parser (" + (st.mode_reason || "no model") + ")";
   $("mode").title = st.mode_reason || "";
+  showLlm(st.llm);
   $("logout").hidden = !st.connected || st.demo;
   $("clear").hidden = !st.connected;
   $("composer").hidden = !st.connected;
@@ -355,6 +375,21 @@ async function refresh() {
   if (!log.querySelector(".turn")) { log.innerHTML = ""; greet(st); }
   lockComposer();
 }
+function showLlm(h) {
+  const chip = $("llm");
+  if (!h || h.state === "off") { chip.hidden = true; return; }
+  chip.hidden = false;
+  const names = { online: "model online", offline: "model offline", auth_error: "model key rejected", unknown: "model: checking…", not_configured: "model not configured" };
+  chip.textContent = (names[h.state] || h.state) + (h.state === "online" && h.latency_ms ? " · " + h.latency_ms + " ms" : "");
+  chip.className = "chip " + (h.state === "online" ? "ok" : h.state === "unknown" ? "" : "bad");
+  chip.title = (h.detail || "") + " (click to re-check). If offline, just send your next message: Mailkeep reconnects automatically.";
+}
+$("llm").onclick = async () => { try { showLlm(await api("/api/llm-check", {})); } catch (e) { /* best effort */ } };
+// Heartbeat: the UI learns about connection changes without waiting for a turn.
+setInterval(async () => {
+  if ($("composer").hidden) return;
+  try { const st = await api("/api/status"); lastStatus = st; showLlm(st.llm); } catch (e) { /* server busy or restarting */ }
+}, 15000);
 window.addEventListener("message", (e) => { if (e.origin === location.origin && e.data === "mailkeep-auth") refresh(); });
 window.addEventListener("focus", () => { if ($("composer").hidden) refresh(); });
 refresh();

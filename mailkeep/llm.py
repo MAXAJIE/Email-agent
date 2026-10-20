@@ -217,7 +217,16 @@ def build_config(preset: Preset) -> dict:
     }
     if preset.slot == "openrouter":
         provider["app_name"] = "mailkeep"
+    # Short answers think less: cap output tokens (MAILKEEP_LLM_MAX_TOKENS).
+    provider["max_tokens"] = _int_setting("MAILKEEP_LLM_MAX_TOKENS", 768, 64, 8192)
     return {
+        # Latency fix: OpenMinion retried silently 3x per call and allowed 100
+        # agent steps per turn. Mailkeep now retries itself (visible, logged),
+        # so OpenMinion makes one attempt and a turn has a small step budget.
+        "runtime": {
+            "provider_retry_max_attempts": 1,
+            "agent_loop_max_steps": _int_setting("MAILKEEP_AGENT_MAX_STEPS", 6, 2, 100),
+        },
         "agents": {
             "openminion": {
                 "name": "openminion",
@@ -227,6 +236,24 @@ def build_config(preset: Preset) -> dict:
         },
         "providers": {preset.slot: provider},
     }
+
+
+def _int_setting(name: str, default: int, low: int, high: int) -> int:
+    raw = setting(name)
+    try:
+        value = int(float(raw)) if raw else default
+    except ValueError:
+        return default
+    return min(max(value, low), high)
+
+
+def _int_setting(name: str, default: int, low: int, high: int) -> int:
+    raw = setting(name)
+    try:
+        value = int(float(raw)) if raw else default
+    except ValueError:
+        return default
+    return min(max(value, low), high)
 
 
 def export_key(preset: Preset) -> bool:

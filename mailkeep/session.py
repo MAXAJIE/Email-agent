@@ -74,6 +74,50 @@ class Session:
                 return Outcome(previews, self.approval)
             return Outcome(previews + [response])
 
+    def propose_draft(self, draft: dict, body: str) -> Outcome:
+        """Preview a fully composed draft and stop at an approval card.
+
+        The body goes through the assistant's own "draft_body" follow-up
+        stage, so approval replays exactly the reviewed text (no re-parsing
+        of a command string that could split on words like "text" or "body").
+        """
+        body = body.strip().lstrip("/").strip()
+        with self.lock:
+            self.assistant.pending = {"stage": "draft_body", "draft": dict(draft)}
+            return self.run_command(body)
+
+    def discard_approval(self) -> bool:
+        """Drop a pending approval (used when the user revises the draft)."""
+        with self.lock:
+            if self.approval is None:
+                return False
+            self.assistant.restore(self.approval.snapshot)
+            self.assistant.pending = None
+            self.approval = None
+            return True
+
+    def propose_draft(self, draft: dict, body: str) -> Outcome:
+        """Preview a fully composed draft and stop at an approval card.
+
+        The body goes through the assistant's own "draft_body" follow-up
+        stage, so approval replays exactly the reviewed text (no re-parsing
+        of a command string that could split on words like "text" or "body").
+        """
+        body = body.strip().lstrip("/").strip()
+        with self.lock:
+            self.assistant.pending = {"stage": "draft_body", "draft": dict(draft)}
+            return self.run_command(body)
+
+    def discard_approval(self) -> bool:
+        """Drop a pending approval (used when the user revises the draft)."""
+        with self.lock:
+            if self.approval is None:
+                return False
+            self.assistant.restore(self.approval.snapshot)
+            self.assistant.pending = None
+            self.approval = None
+            return True
+
     def resolve(self, approval_id: str, approve: bool) -> Outcome:
         with self.lock:
             approval = self.approval

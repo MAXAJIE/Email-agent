@@ -10,12 +10,52 @@ from concurrent.futures import Future
 class TaskPool:
     def __init__(self, workers: int):
         self.slots = threading.BoundedSemaphore(workers)
+        self._lock = threading.Lock()
+        self._held: set[int] = set()  # ids of futures still holding a slot
+
+    def _release(self, future: Future) -> None:
+        with self._lock:
+            if id(future) not in self._held:
+                return  # already released
+            self._held.discard(id(future))
+        self.slots.release()
+
+    def abandon(self, future: Future) -> None:
+        """Give back the slot of a call that timed out or was cancelled.
+
+        The worker thread may still be blocked inside the provider's HTTP
+        call. Before this existed its slot stayed taken until the provider
+        gave up (minutes), so after a few timeouts every new message failed
+        with "All agents are busy" - the "keeps telling error" symptom.
+        """
+        self._release(future)
+        self._lock = threading.Lock()
+        self._held: set[int] = set()  # ids of futures still holding a slot
+
+    def _release(self, future: Future) -> None:
+        with self._lock:
+            if id(future) not in self._held:
+                return  # already released
+            self._held.discard(id(future))
+        self.slots.release()
+
+    def abandon(self, future: Future) -> None:
+        """Give back the slot of a call that timed out or was cancelled.
+
+        The worker thread may still be blocked inside the provider's HTTP
+        call. Before this existed its slot stayed taken until the provider
+        gave up (minutes), so after a few timeouts every new message failed
+        with "All agents are busy" - the "keeps telling error" symptom.
+        """
+        self._release(future)
 
     def submit(self, function, *args) -> Future:
         # No unbounded executor queue. Running abandoned calls retain capacity.
         if not self.slots.acquire(blocking=False):
             raise RuntimeError("All agents are busy; wait for current calls to finish.")
         future = Future()
+        with self._lock:
+            self._held.add(id(future))
 
         def work():
             try:
@@ -25,7 +65,7 @@ class TaskPool:
                     except BaseException as exc:
                         future.set_exception(exc)
             finally:
-                self.slots.release()
+                self._release(future)
 
         threading.Thread(target=work, name="mailkeep-worker", daemon=True).start()
         return future

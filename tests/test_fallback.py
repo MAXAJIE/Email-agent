@@ -46,9 +46,9 @@ def test_provider_error_falls_back_to_rules(openminion, quiet):
     out = failing_agent(error, session).chat("find invoices")
 
     texts = [response.text for response in out.responses]
-    assert texts[0] == (
-        "Model provider failed (PROVIDER_TIMEOUT): upstream returned no content. "
-        "Answered with the rule-based parser instead."
+    assert texts[0].startswith(
+        "Model provider failed (PROVIDER_TIMEOUT): upstream returned no content, "
+        "gave up after 3 attempts. Answered with the rule-based parser instead."
     )
     # The user still gets an answer from the deterministic parser.
     assert len(texts) > 1
@@ -62,7 +62,7 @@ def test_timeout_falls_back_to_rules(openminion, quiet):
     )
 
     texts = [response.text for response in out.responses]
-    assert texts[0].startswith("Agent turn timed out (turn exceeded 180s).")
+    assert texts[0].startswith("Agent turn timed out (turn exceeded 180s), gave up after 3 attempts.")
     assert len(texts) > 1
 
 

@@ -93,7 +93,15 @@ class App:
             "mode": self.agent.mode if self.agent else "",
             "mode_reason": self.agent.reason if self.agent else "",
             "auth_error": "" if connected else self.auth_error,
+            "llm": self.llm_health(),
         }
+
+    def llm_health(self, refresh: bool = False) -> dict:
+        agent = self.agent
+        if agent is None or getattr(agent, "health", None) is None or agent.mode != "openminion":
+            return {"state": "off", "detail": "rule parser only"}
+        health = agent.health.check_now() if refresh else agent.health.snapshot()
+        return health.public()
 
     def disconnect(self) -> None:
         with self.lock:
@@ -219,6 +227,8 @@ def make_handler(app: App):
                 if route == "/api/login":
                     app.auth_error = ""
                     return self._json(200, {"url": app.login.start()})
+                if route == "/api/llm-check":
+                    return self._json(200, app.llm_health(refresh=True))
                 if route == "/api/logout":
                     app.disconnect()
                     return self._json(200, {"ok": True})
