@@ -226,5 +226,7 @@ python -m openminion --config .openminion/agents.json config init --provider ope
 export OPENAI_API_KEY=...
 ```
 
-`MAILKEEP_AGENT=rules` forces the parser; `MAILKEEP_AGENT_TIMEOUT` (default 180)
-bounds one agent turn.
+`MAILKEEP_AGENT=rules` forces the parser; `MAILKEEP_AGENT_TIMEOUT` (default 120)
+bounds one agent turn. Messages that clearly ask for a mailbox change (score
+≥ `MAILKEEP_ACTION_THRESHOLD`, default 0.6) skip the model entirely: Mailkeep
+shows an execution brief and waits for Approve before anything changes.

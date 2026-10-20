@@ -142,3 +142,80 @@ def test_chat_jobs_are_idempotent_and_cancellable():
     assert jobs.status("r2")["state"] == "failed"
     with pytest.raises(KeyError):
         jobs.cancel("missing")
+
+
+def test_action_intent_scores():
+    from mailkeep import llm
+
+    # Clear change requests score at or above the default 0.6 threshold.
+    assert llm.action_intent("archive 1,3") >= 0.6
+    assert llm.action_intent("change the label on 2 to Finance") >= 0.6
+    assert llm.action_intent("modify message 4 subject") >= 0.6
+    assert llm.action_intent("delete all newsletters") >= 0.6
+    # Questions and reads stay below it.
+    assert llm.action_intent("what changed in my inbox?") < 0.6
+    assert llm.action_intent("find invoices") < 0.6
+    assert llm.action_intent("show me unread emails") < 0.6
+    assert llm.action_intent("hello") < 0.6
+
+
+def test_action_threshold_validation(monkeypatch):
+    from mailkeep import llm
+
+    assert llm.action_threshold() == 0.6
+    monkeypatch.setattr(llm, "setting", lambda name: "0.8" if name == "MAILKEEP_ACTION_THRESHOLD" else "")
+    assert llm.action_threshold() == 0.8
+    monkeypatch.setattr(llm, "setting", lambda name: "2" if name == "MAILKEEP_ACTION_THRESHOLD" else "")
+    with pytest.raises(ValueError):
+        llm.action_threshold()
+
+
+def test_action_brief_asks_permission_without_model(monkeypatch):
+    from mailkeep import agent as agent_mod
+    from mailkeep.demo import DemoGmailClient
+    from mailkeep.session import Session
+
+    monkeypatch.setattr(agent_mod, "resolve_mode", lambda: ("openminion", "test"))
+    monkeypatch.setattr(agent_mod, "trace", lambda kind, text: None)
+    from mailkeep import llm
+    monkeypatch.setattr(llm, "describe", lambda: [])
+
+    session = Session(DemoGmailClient())
+    session.run_command("find unread emails")  # give the list row numbers
+    agent = agent_mod.MailkeepAgent(session)
+
+    def no_model(*args, **kwargs):
+        raise AssertionError("the model must not run for a clear action request")
+
+    monkeypatch.setattr(agent, "_run_model", no_model)
+    out = agent.chat("archive 1")
+    assert out.approval is not None
+    assert "execution brief" in out.responses[0].text.lower()
+    # Nothing changed yet: the write waits for the user's Approve.
+    approved = session.resolve(out.approval.id, True)
+    assert approved.responses
+
+
+def test_action_brief_falls_back_to_model(monkeypatch):
+    from mailkeep import agent as agent_mod
+    from mailkeep.demo import DemoGmailClient
+    from mailkeep.session import Session
+
+    monkeypatch.setattr(agent_mod, "resolve_mode", lambda: ("openminion", "test"))
+    monkeypatch.setattr(agent_mod, "trace", lambda kind, text: None)
+    from mailkeep import llm
+    monkeypatch.setattr(llm, "describe", lambda: [])
+
+    session = Session(DemoGmailClient())
+    agent = agent_mod.MailkeepAgent(session)
+    called = []
+
+    def fake_run_model(profile, prompt, tools, deadline, cancel):
+        called.append(profile)
+        return "model answer"
+
+    monkeypatch.setattr(agent, "_run_model", fake_run_model)
+    # Scores as an action but the parser cannot handle it -> model fallback.
+    out = agent.chat("change all my emails somehow")
+    assert called == ["fast"]
+    assert any("model answer" in r.text for r in out.responses)

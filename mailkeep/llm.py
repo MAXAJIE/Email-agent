@@ -356,4 +356,59 @@ def profile_for(text: str) -> str:
         return "classifier"
     if re.search(r"\b(find|search|open|list|labels)\b", text):
         return "fast"
+    if action_intent(text) >= action_threshold():
+        return "fast"
     return "default"
+
+
+# Verbs that change mailbox state. Kept broad on purpose: the score, not any
+# single word, decides, and read-only verbs pull it back down.
+_ACTION_VERBS = (
+    "change", "modify", "update", "rename", "edit", "archive", "delete",
+    "remove", "label", "unlabel", "mark", "move", "restore", "trash",
+    "star", "unstar", "mute", "snooze", "forward", "send", "reply", "draft",
+    "compose", "clean", "clear", "organize", "organise", "fix",
+)
+_READ_ONLY = (
+    "find", "search", "show", "list", "open", "read", "what", "which", "how",
+    "summarize", "summarise", "analyze", "analyse", "explain", "tell",
+)
+
+
+def action_intent(text: str) -> float:
+    """Confidence 0..1 that the message asks for a mailbox-changing action.
+
+    Weighted cues, not a single keyword: an action verb is the base, row
+    references and mailbox targets raise it, question marks and read-only
+    verbs lower it. Compare against action_threshold().
+    """
+    import re
+
+    words = text.lower()
+    score = 0.0
+    verbs = sum(1 for v in _ACTION_VERBS if re.search(rf"\b{re.escape(v)}\b", words))
+    if verbs:
+        score += 0.45 + 0.1 * min(verbs - 1, 2)
+    if re.search(r"\b\d+([,-]\s*\d+)*\b", words):
+        score += 0.2  # a row reference ("archive 1,3")
+    if re.search(r"\b(emails?|mails?|mailbox|messages?|inbox|newsletters?|label|subject|sender)\b", words):
+        score += 0.15
+    if re.search(r"\b(all|every|each)\b", words):
+        score += 0.1
+    if "?" in text:
+        score -= 0.25
+    if any(re.search(rf"\b{re.escape(v)}\b", words) for v in _READ_ONLY):
+        score -= 0.4
+    return max(0.0, min(1.0, score))
+
+
+def action_threshold() -> float:
+    """Confidence at which a message is treated as an action request (0..1)."""
+    raw = setting("MAILKEEP_ACTION_THRESHOLD")
+    try:
+        value = float(raw) if raw else 0.6
+    except ValueError:
+        raise ValueError("MAILKEEP_ACTION_THRESHOLD must be a number from 0 to 1") from None
+    if not 0.0 <= value <= 1.0:
+        raise ValueError("MAILKEEP_ACTION_THRESHOLD must be from 0 to 1")
+    return value

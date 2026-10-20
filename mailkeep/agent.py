@@ -52,6 +52,8 @@ Rules:
   to review the card and press Approve. Never claim a write happened.
 - Mailkeep cannot send email. Drafts are the furthest it goes.
 - Be brief. The UI already shows the tool's tables; do not repeat them.
+- Think fast: decide the command immediately, do not deliberate or restate
+  the request. Final answers are at most two short sentences.
 """
 
 _LEAK_MARKERS = ("[CONSTRAINTS & POLICY]", "[BUDGET TELEMETRY]", "budget_envelope_status")
@@ -254,11 +256,16 @@ class MailkeepAgent:
             direct = text.strip().startswith("/") or self.session.assistant.pending is not None
             if self.mode != "openminion" or direct:
                 return self.session.run_command(text)
+            from . import llm
             import re
             if re.search(r"\b(triage|classify|categorize|prioritize)\b", text.lower()) or (
                 re.search(r"\b(analyze|analyse|compare)\b", text.lower()) and "trash" not in text.lower()
             ):
                 return self._analysis_turn(text)
+            if llm.action_intent(text) >= llm.action_threshold():
+                brief = self._action_brief(text)
+                if brief is not None:
+                    return brief
             return self._agent_turn(text)
         finally:
             self._busy.clear()
@@ -303,11 +310,32 @@ class MailkeepAgent:
                 pass
             (OPENMINION_DIR / "runtime" / f"{token}.json").unlink(missing_ok=True)
 
+    def _action_brief(self, text: str) -> Outcome | None:
+        """Fast path for clear action requests: preview the change and ask
+        for permission without waiting on a model turn.
+
+        Returns None when the deterministic parser cannot handle the text,
+        so the caller falls back to the model agent.
+        """
+        try:
+            outcome = self.session.run_command(text)
+        except Exception:
+            return None
+        if outcome.approval is None:
+            # The parser produced no write preview (e.g. it misread the text
+            # as a search), so let the model interpret the request instead.
+            return None
+        brief = Response(
+            f"Plan: {text.strip()}. Review the execution brief below and "
+            "press Approve to run it, or Cancel to keep everything unchanged."
+        )
+        return Outcome([brief] + outcome.responses, outcome.approval)
+
     def _agent_turn(self, text: str) -> Outcome:
         from . import llm
         outcomes = []
         cancel = self._cancel
-        deadline = time.monotonic() + llm.positive_seconds("MAILKEEP_AGENT_TIMEOUT", 180)
+        deadline = time.monotonic() + llm.positive_seconds("MAILKEEP_AGENT_TIMEOUT", 120)
         reply = ""
         try:
             future = self._pool.submit(self._run_model, llm.profile_for(text),
@@ -357,7 +385,7 @@ class MailkeepAgent:
     def _analysis_turn(self, text: str) -> Outcome:
         from . import llm
         cancel = self._cancel
-        deadline = time.monotonic() + llm.positive_seconds("MAILKEEP_AGENT_TIMEOUT", 180)
+        deadline = time.monotonic() + llm.positive_seconds("MAILKEEP_AGENT_TIMEOUT", 120)
         # Snapshot of the current numbered list. Only the owner performs a read
         # if there is no list; analysts cannot alter rows, approvals or Gmail.
         initial = None
