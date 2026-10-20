@@ -97,7 +97,9 @@ def is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, (NotRetryable, InterruptedError, KeyboardInterrupt)):
         return False
     text = describe_error(exc).lower()
-    return not any(m in text for m in ("401", "403", "unauthor", "forbidden", "invalid api key", "auth_"))
+    # 404 = wrong model name or base URL; another attempt hits the same 404.
+    return not any(m in text for m in ("401", "403", "404", "unauthor", "forbidden",
+                                       "invalid api key", "auth_", "not found", "model_missing"))
 
 
 def with_retries(call: Callable[[int], object], *, what: str, attempts: int | None = None,
@@ -167,18 +169,87 @@ class Health:
                 "checked_seconds_ago": age, "consecutive_failures": self.failures}
 
 
+# Health states a model call may still be attempted in. Everything else
+# (offline, auth_error, model_missing, error, not_configured) means "do not
+# use this model; fall back".
+USABLE_STATES = ("online", "unknown", "rate_limited")
+
+
+def _model_ids(payload: bytes) -> set[str] | None:
+    """Model ids from an OpenAI-style ``GET /models`` body (None = not a list)."""
+    try:
+        data = json.loads(payload.decode("utf-8", "replace"))
+    except ValueError:
+        return None
+    items = data.get("data") if isinstance(data, dict) else data
+    if isinstance(data, dict) and items is None:
+        items = data.get("models")
+    if not isinstance(items, list):
+        return None
+    ids = set()
+    for item in items:
+        value = (item.get("id") or item.get("name")) if isinstance(item, dict) else item
+        if isinstance(value, str) and value:
+            ids.add(value)
+            ids.add(value.removeprefix("models/"))  # Gemini lists "models/<id>"
+    return ids
+
+
+def _http(request, timeout: float, limit: int = 4_000_000) -> tuple[int, bytes]:
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status, response.read(limit)
+    except urllib.error.HTTPError as exc:
+        return exc.code, (exc.read(2000) if exc.fp else b"")
+
+
+def _completion_check(preset, timeout: float, started: float) -> Health:
+    """Ask the configured model for one token: the only proof it really answers."""
+    body = {"model": preset.model, "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1, "temperature": 0}
+    request = urllib.request.Request(_endpoint(preset.base_url, "chat/completions"),
+                                     data=json.dumps(body).encode(), headers=_headers(preset),
+                                     method="POST")
+    try:
+        status, payload = _http(request, timeout)
+    except Exception as exc:  # DNS, refused, TLS, timeout
+        return Health("offline", detail=describe_error(exc), checked_at=time.time())
+    latency = int((time.monotonic() - started) * 1000)
+    text = " ".join(payload.decode("utf-8", "replace")[:160].split())
+    if status == 200:
+        return Health("online", latency, f"model {preset.model} answered", time.time())
+    if status in (401, 403):
+        return Health("auth_error", latency, f"HTTP {status}: the API key was rejected", time.time())
+    if status == 429:
+        return Health("rate_limited", latency, "HTTP 429: rate limited (model exists)", time.time())
+    if status == 404 or (status in (400, 422) and "model" in text.lower()):
+        return Health("model_missing", latency,
+                      f"HTTP {status}: model {preset.model!r} not found at {preset.base_url}"
+                      + (f" ({text})" if text else ""), time.time())
+    if status >= 500:
+        return Health("offline", latency, f"HTTP {status} from provider", time.time())
+    return Health("error", latency, f"HTTP {status}: {text or 'request rejected'}", time.time())
+
+
 def probe(preset, timeout: float = 6.0) -> Health:
-    """One reachability check. Any HTTP answer below 500 means "reachable"."""
+    """Is *this model* usable right now? Never reports "online" on a guess.
+
+    Before, any HTTP answer below 500 from ``GET /models`` counted as online,
+    so a wrong model name (HTTP 404 on every chat call) still showed "online".
+    Now ``GET /models`` 401/403 -> auth_error, 5xx/network -> offline, the
+    model id listed -> online; otherwise one 1-token completion decides
+    (200 online, 404 model_missing, 429 rate_limited).
+    """
     if preset is None:
         return Health("not_configured", detail="no model provider configured", checked_at=time.time())
+    if not getattr(preset, "model", ""):
+        return Health("not_configured", detail="no model name set", checked_at=time.time())
+    if not getattr(preset, "base_url", ""):
+        return Health("not_configured", detail="no base URL set", checked_at=time.time())
     started = time.monotonic()
     request = urllib.request.Request(_endpoint(preset.base_url, "models"), headers=_headers(preset))
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            response.read(2048)
-            status = response.status
-    except urllib.error.HTTPError as exc:
-        status = exc.code
+        status, payload = _http(request, timeout)
     except Exception as exc:  # DNS, refused, TLS, timeout
         return Health("offline", detail=describe_error(exc), checked_at=time.time())
     latency = int((time.monotonic() - started) * 1000)
@@ -186,7 +257,11 @@ def probe(preset, timeout: float = 6.0) -> Health:
         return Health("auth_error", latency, f"HTTP {status}: the API key was rejected", time.time())
     if status >= 500:
         return Health("offline", latency, f"HTTP {status} from provider", time.time())
-    return Health("online", latency, f"HTTP {status}", time.time())
+    if status == 200:
+        ids = _model_ids(payload)
+        if ids and preset.model in ids:
+            return Health("online", latency, f"model {preset.model} listed by provider", time.time())
+    return _completion_check(preset, timeout, started)
 
 
 class HealthMonitor:
@@ -244,7 +319,7 @@ class HealthMonitor:
         current = self.snapshot()
         if current.state != "online" or time.time() - current.checked_at > max_age:
             current = self.check_now()
-        return current.state in ("online", "unknown"), current
+        return current.state in USABLE_STATES, current
 
 
 def complete(preset, system: str, user: str, *, max_tokens: int = 500,

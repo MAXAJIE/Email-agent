@@ -221,5 +221,5 @@ def test_action_brief_falls_back_to_model(monkeypatch):
     monkeypatch.setattr(agent, "_run_model", fake_run_model)
     # Scores as an action but the parser cannot handle it -> model fallback.
     out = agent.chat("change all my emails somehow")
-    assert called == ["fast"]
+    assert called == ["default"]
     assert any("model answer" in r.text for r in out.responses)

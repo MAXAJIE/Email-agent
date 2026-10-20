@@ -11,6 +11,8 @@ def _offline_safe(monkeypatch, tmp_path):
     monkeypatch.setattr(fastllm, "probe", lambda preset, timeout=6.0: fastllm.Health(
         "online", 1, "stub", time.time()))
     monkeypatch.setattr(fastllm, "retry_backoff", lambda: 0.0)
+    # Router tests enable it explicitly with a stubbed model.
+    monkeypatch.setenv("MAILKEEP_LLM_ROUTER", "off")
     monkeypatch.setattr(fastllm, "LOG_FILE", tmp_path / "mailkeep.log")
     monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "mailkeep-settings.json")
     monkeypatch.setattr(config, "_session_overrides", {})

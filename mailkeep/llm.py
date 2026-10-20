@@ -247,15 +247,6 @@ def _int_setting(name: str, default: int, low: int, high: int) -> int:
     return min(max(value, low), high)
 
 
-def _int_setting(name: str, default: int, low: int, high: int) -> int:
-    raw = setting(name)
-    try:
-        value = int(float(raw)) if raw else default
-    except ValueError:
-        return default
-    return min(max(value, low), high)
-
-
 def export_key(preset: Preset) -> bool:
     """Put the key where OpenMinion looks (process env, under key_env)."""
     value = _api_key(preset)
@@ -313,7 +304,7 @@ def _selected_profile(profile: str) -> Preset | None:
     if provider:
         preset = by_name(provider)
         if preset is None:
-            raise ValueError(f"{prefix}PROVIDER is unknown")
+            raise ValueError(f"{prefix}PROVIDER={provider!r} is unknown; use one of {', '.join(PRESETS)}")
     else:
         preset = base
     if preset is None:

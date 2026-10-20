@@ -3,32 +3,12 @@ from __future__ import annotations
 
 import threading
 import time
-import uuid
 from concurrent.futures import Future
 
 
 class TaskPool:
     def __init__(self, workers: int):
         self.slots = threading.BoundedSemaphore(workers)
-        self._lock = threading.Lock()
-        self._held: set[int] = set()  # ids of futures still holding a slot
-
-    def _release(self, future: Future) -> None:
-        with self._lock:
-            if id(future) not in self._held:
-                return  # already released
-            self._held.discard(id(future))
-        self.slots.release()
-
-    def abandon(self, future: Future) -> None:
-        """Give back the slot of a call that timed out or was cancelled.
-
-        The worker thread may still be blocked inside the provider's HTTP
-        call. Before this existed its slot stayed taken until the provider
-        gave up (minutes), so after a few timeouts every new message failed
-        with "All agents are busy" - the "keeps telling error" symptom.
-        """
-        self._release(future)
         self._lock = threading.Lock()
         self._held: set[int] = set()  # ids of futures still holding a slot
 

@@ -11,7 +11,7 @@ from rich.panel import Panel
 from rich.table import Table as RichTable
 from rich.text import Text
 
-from .assistant import HELP_TEXT, Assistant, AssistantError
+from .assistant import Assistant, AssistantError
 from .auth import load_credentials, token_state
 from .config import (
     AuthRequired,
@@ -58,39 +58,71 @@ def _confirm(question: str) -> bool:
 
 
 def _chat(console: Console, backend, limit: int, *, yes: bool) -> int:
-    assistant = Assistant(
-        backend,
-        confirm=(lambda _question: True) if yes else _confirm,
-        notify=lambda response: render(console, response),
-        limit=limit,
-    )
+    """Terminal chat with the same brain as the web UI.
+
+    Before, the console only ran the rule parser: no model, no agents, no
+    provider report. Now it prints the verified provider status, routes every
+    message through MailkeepAgent (main model decides -> agents) and turns
+    approval cards into a y/N prompt.
+    """
+    from . import providers
+    from .agent import MailkeepAgent
+    from .session import Session
+
+    try:
+        for line in providers.startup_report():
+            console.print(Text(f"[mailkeep] {line}", style="dim"))
+    except Exception as exc:  # never block the console on a probe
+        console.print(Text(f"[mailkeep] provider check failed: {exc}", style="yellow"))
+    agent = MailkeepAgent(Session(backend, limit=limit))
     try:
         account = backend.profile_email()
     except Exception:
         account = "(unknown)"
     mode = "demo data" if isinstance(backend, DemoGmailClient) else "Gmail"
-    console.print(Panel(Text(BANNER), title="Mailkeep", subtitle=f"{mode} | {account}"))
-    console.print(Text("Type 'help' for commands. Ctrl+C clears the line, Ctrl+D exits.", style="dim"))
+    console.print(Panel(Text(BANNER), title="Mailkeep",
+                        subtitle=f"{mode} | {account} | chat: {agent.mode}"))
+    console.print(Text("Type 'help' for commands. Ctrl+C stops a turn, Ctrl+D exits.", style="dim"))
 
-    while True:
-        try:
-            text = input("you> ")
-        except EOFError:
-            console.print("")
-            break
-        except KeyboardInterrupt:
-            console.print("")
-            continue
-        if not text.strip():
-            continue
-        if parse_intent(text).kind == "quit":
-            break
-        try:
-            response = assistant.handle(text)
-        except (AssistantError, GmailError, ConfigError, AuthRequired) as exc:
-            console.print(Text(f"Error: {exc}", style="bold red"))
-            continue
-        render(console, response)
+    def step(message: str) -> None:
+        console.print(Text(f"  ... {message}", style="dim"))
+
+    try:
+        while True:
+            try:
+                text = input("you> ")
+            except EOFError:
+                console.print("")
+                break
+            except KeyboardInterrupt:
+                console.print("")
+                continue
+            if not text.strip():
+                continue
+            if parse_intent(text).kind == "quit":
+                break
+            try:
+                outcome = agent.chat(text, step)
+            except KeyboardInterrupt:
+                agent.cancel()
+                console.print(Text("Stopped.", style="yellow"))
+                continue
+            except (AssistantError, GmailError, ConfigError, AuthRequired) as exc:
+                console.print(Text(f"Error: {exc}", style="bold red"))
+                continue
+            for response in outcome.responses:
+                render(console, response)
+            if outcome.approval is not None:
+                approved = yes or _confirm(outcome.approval.question)
+                try:
+                    result = agent.session.resolve(outcome.approval.id, approved)
+                except (AssistantError, GmailError) as exc:
+                    console.print(Text(f"Error: {exc}", style="bold red"))
+                    continue
+                for response in result.responses:
+                    render(console, response)
+    finally:
+        agent.close()
     return 0
 
 

@@ -63,37 +63,146 @@ def _probe_preset(preset: llm.Preset, key: str) -> llm.Preset:
     return replace(preset, profile="probe", api_key=key)
 
 
-def effective(profile: str) -> tuple[llm.Preset | None, str]:
-    """(preset to use for `profile`, note). Falls back to the main model."""
-    if profile == "default":
-        try:
-            return llm.selected(), ""
-        except ValueError as exc:
-            return None, str(exc)
-    why = ""
+HEALTH_TTL = 60.0  # seconds a probe verdict is trusted before re-probing
+
+
+def _health_key(preset: llm.Preset) -> str:
+    return f"{preset.key}|{preset.base_url}|{preset.model}"
+
+
+def health_of(preset: llm.Preset | None, *, refresh: bool = False,
+              timeout: float = 5.0) -> fastllm.Health:
+    """Probe verdict for exactly this provider + endpoint + model (cached)."""
+    if preset is None:
+        return fastllm.Health("not_configured", detail="no model", checked_at=time.time())
+    k = _health_key(preset)
+    with _cache_lock:
+        cached = _health.get(k)
+    if cached is not None and not refresh and time.time() - cached.checked_at < HEALTH_TTL:
+        return cached
+    key = llm._api_key(preset)
+    if not key:
+        result = fastllm.Health("not_configured", detail="no API key", checked_at=time.time())
+    else:
+        result = fastllm.probe(_probe_preset(preset, key), timeout=timeout)
+    with _cache_lock:
+        _health[k] = result
+    return result
+
+
+def mark_failed(preset: llm.Preset | None, exc: BaseException) -> None:
+    """A real call failed: stop routing to it until a fresh probe says otherwise."""
+    if preset is None:
+        return
+    text = fastllm.describe_error(exc)
+    state = "model_missing" if ("404" in text or "not found" in text.lower()) else (
+        "auth_error" if any(m in text for m in ("401", "403")) else "offline")
+    with _cache_lock:
+        _health[_health_key(preset)] = fastllm.Health(
+            state, detail=f"call failed: {text[:160]}", checked_at=time.time())
+
+
+def _dedicated(profile: str) -> tuple[llm.Preset | None, str]:
+    """The role's own provider + key + model, or (None, why it has none).
+
+    A role (and the agent that runs on it) is only used when all three are
+    configured for it: MAILKEEP_LLM_<ROLE>_PROVIDER, MAILKEEP_LLM_<ROLE>_MODEL
+    and an API key (MAILKEEP_LLM_<ROLE>_API_KEY or that provider's own key).
+    Anything less falls back to the main model instead of guessing.
+    """
+    prefix = f"MAILKEEP_LLM_{profile.upper()}_"
+    provider = setting(prefix + "PROVIDER").strip()
+    model = setting(prefix + "MODEL").strip()
+    if not provider and not model:
+        return None, "not set, uses the main model"
+    if not provider:
+        return None, f"{prefix}PROVIDER is not set (a role needs its own provider, key and model)"
+    if not model:
+        return None, f"{prefix}MODEL is not set (a role needs its own provider, key and model)"
     try:
         preset = llm.selected(profile)
     except ValueError as exc:
-        preset, why = None, str(exc)
-    if preset is not None and not llm._api_key(preset):
-        preset, why = None, f"{preset.label} has no API key"
+        return None, str(exc)
+    if preset is None:
+        return None, "no provider resolved"
+    if not llm._api_key(preset):
+        return None, f"{preset.label} has no API key ({prefix}API_KEY or {preset.key_env})"
+    return preset, ""
+
+
+def effective(profile: str) -> tuple[llm.Preset | None, str]:
+    """(preset to use for `profile`, note). Falls back to the main model.
+
+    Never returns a role model whose last probe/call said it is unusable.
+    """
+    try:
+        main = llm.selected()
+        main_error = ""
+    except ValueError as exc:
+        main, main_error = None, str(exc)
+    if profile == "default":
+        return main, main_error
+    preset, why = _dedicated(profile)
     if preset is not None:
-        configured = bool(setting(f"MAILKEEP_LLM_{profile.upper()}_PROVIDER")
-                          or setting(f"MAILKEEP_LLM_{profile.upper()}_MODEL"))
-        health = _health.get(f"{preset.key}|{preset.model}")
-        if not configured:
-            return preset, "not set, uses the main model"
-        if health is not None and health.state in ("offline", "auth_error"):
-            preset, why = None, f"{preset.label} is {health.state}"
+        health = health_of(preset)
+        if health.state in fastllm.USABLE_STATES:
+            return preset, ""
+        why = f"{preset.label} {preset.model} is {health.state} ({health.detail})"
+    if main is None:
+        return None, (why + "; " if why else "") + "no main model either, rule parser answers"
+    if why == "not set, uses the main model":
+        return main, why
+    return main, (why + "; " if why else "") + "falls back to the main model"
+
+
+def chain(profile: str) -> list[tuple[llm.Preset, str]]:
+    """Presets to try, in order, for one job: the role's model, then the main one."""
+    out: list[tuple[llm.Preset, str]] = []
+    preset, note = effective(profile)
     if preset is not None:
-        return preset, ""
+        out.append((preset, note))
     try:
         main = llm.selected()
     except ValueError:
         main = None
-    if main is None:
-        return None, (why + "; " if why else "") + "no main model either, rule parser answers"
-    return main, (why + "; " if why else "") + "falls back to the main model"
+    if main is not None and all(_health_key(p) != _health_key(main) for p, _ in out):
+        out.append((main, "main model (fallback)"))
+    return out
+
+
+def complete(profile: str, system: str, user: str, *, max_tokens: int = 500,
+             timeout: float | None = None, cancel=None, on_fallback=None) -> tuple[str, llm.Preset]:
+    """One completion for `profile`, falling back to the main model on failure.
+
+    Raises the last error when every candidate failed (the caller then uses
+    the rule parser). Returns (text, preset that answered).
+    """
+    candidates = chain(profile)
+    if not candidates:
+        raise fastllm.NotRetryable("no model provider configured")
+    last: BaseException | None = None
+    for index, (preset, _note) in enumerate(candidates):
+        try:
+            text = fastllm.with_retries(
+                lambda n, p=preset: fastllm.complete(
+                    p, system, user, max_tokens=max_tokens, cancel=cancel,
+                    timeout=timeout or fastllm.attempt_timeout(p.timeout_seconds)),
+                what=f"{profile} via {preset.label} {preset.model}",
+                cancelled=(cancel.is_set if cancel is not None else (lambda: False)))
+            return text, preset
+        except (InterruptedError, KeyboardInterrupt):
+            raise
+        except Exception as exc:  # noqa: BLE001 - try the next candidate
+            last = getattr(exc, "last", exc)
+            mark_failed(preset, last)
+            if index + 1 < len(candidates):
+                nxt = candidates[index + 1][0]
+                fastllm.log_event("llm-fallback", f"{profile}: {preset.label} {preset.model} failed "
+                                  f"({fastllm.describe_error(last)[:120]}); using main model "
+                                  f"{nxt.label} {nxt.model}")
+                if on_fallback:
+                    on_fallback(preset, nxt)
+    raise last or RuntimeError("no model answered")
 
 
 def _rows() -> list[dict]:
@@ -114,7 +223,7 @@ def _rows() -> list[dict]:
 
 
 def inventory(probe: bool = True, timeout: float = 5.0) -> dict:
-    """Every supported provider: key present?, online?, model, roles it serves."""
+    """Every supported provider: key present?, really online?, model, roles."""
     rows = _rows()
 
     def check(row):
@@ -123,6 +232,8 @@ def inventory(probe: bool = True, timeout: float = 5.0) -> dict:
             return fastllm.Health("not_configured", detail="no API key", checked_at=time.time())
         if not preset.base_url:
             return fastllm.Health("not_configured", detail="no base URL", checked_at=time.time())
+        if not preset.model:
+            return fastllm.Health("not_configured", detail="no model name", checked_at=time.time())
         return fastllm.probe(_probe_preset(preset, key), timeout=timeout)
 
     if probe:
@@ -130,17 +241,27 @@ def inventory(probe: bool = True, timeout: float = 5.0) -> dict:
             results = list(pool.map(check, rows))
         with _cache_lock:
             for row, health in zip(rows, results):
-                _health[f"{row['preset'].key}|{row['preset'].model}"] = health
+                _health[_health_key(row["preset"])] = health
+        # Dedicated role models are probed too (they may be other models).
+        for role in ROLES[1:]:
+            preset, _why = _dedicated(role)
+            if preset is not None:
+                health_of(preset, refresh=True, timeout=timeout)
     roles = {}
     for role in ROLES:
         preset, note = effective(role)
+        if preset is None:
+            state = "off"
+        else:
+            cached = _health.get(_health_key(preset))
+            state = cached.state if cached is not None else "unknown"
         roles[role] = {"purpose": ROLE_INFO[role], "provider": preset.key if preset else "",
                        "label": preset.label if preset else "rule parser",
-                       "model": preset.model if preset else "", "note": note}
+                       "model": preset.model if preset else "", "note": note, "state": state}
     providers = []
     for row in rows:
         preset = row["preset"]
-        health = _health.get(f"{preset.key}|{preset.model}") or fastllm.Health(
+        health = _health.get(_health_key(preset)) or fastllm.Health(
             "not_configured" if not row["key"] else "unknown")
         providers.append({
             "key": preset.key, "label": preset.label, "model": preset.model,
@@ -149,22 +270,32 @@ def inventory(probe: bool = True, timeout: float = 5.0) -> dict:
             "roles": [r for r, info in roles.items() if info["provider"] == preset.key],
         })
     online = [p["key"] for p in providers if p["state"] == "online"]
+    main = roles["default"]
+    main_ok = bool(main["provider"]) and main["state"] in fastllm.USABLE_STATES
     return {"providers": providers, "roles": roles, "online": online,
-            "mode_hint": "openminion" if roles["default"]["provider"] else "rules"}
+            "mode_hint": "openminion" if main_ok else "rules"}
 
 
 def startup_report() -> list[str]:
-    """Console lines printed when localhost starts (no keys, only status)."""
+    """Console lines printed when localhost starts (no keys, only verified status)."""
     data = inventory(probe=True)
-    lines = [f"providers online: {len(data['online'])}/{len(data['providers'])}"]
+    lines = [f"providers online: {len(data['online'])}/{len(data['providers'])}"
+             "  (online = the configured model is listed by the provider or answered a test)"]
     for p in data["providers"]:
         roles = ", ".join(p["roles"]) or "-"
-        lines.append(f"  {p['label']:<28} {p['state']:<15} model={p['model'] or '-'}  roles={roles}")
+        detail = f"  [{p['detail']}]" if p["state"] != "online" and p["detail"] else ""
+        lines.append(f"  {p['label']:<28} {p['state']:<15} model={p['model'] or '-'}  "
+                     f"roles={roles}{detail}")
     for role, info in data["roles"].items():
         tail = f"  ({info['note']})" if info["note"] else ""
-        lines.append(f"  role {role:<10} -> {info['label']} {info['model']}{tail}")
-    if not data["roles"]["default"]["provider"]:
+        state = f" [{info['state']}]" if info["provider"] else ""
+        lines.append(f"  role {role:<10} -> {info['label']} {info['model']}{state}{tail}")
+    main = data["roles"]["default"]
+    if not main["provider"]:
         lines.append("  no model configured: the rule parser answers. Add a key with the gear icon.")
+    elif main["state"] not in fastllm.USABLE_STATES:
+        lines.append(f"  main model {main['label']} {main['model']} is {main['state']}: chat uses "
+                     "the rule parser until it answers (fix the model name / base URL / key).")
     return lines
 
 
