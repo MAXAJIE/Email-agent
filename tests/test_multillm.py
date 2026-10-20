@@ -85,7 +85,11 @@ def test_profile_for_picks_the_task_model():
     assert llm.profile_for("plan my week from this inbox") == "reasoning"
     assert llm.profile_for("triage the inbox") == "classifier"
     assert llm.profile_for("find invoices from Acme") == "fast"
-    assert llm.profile_for("hello") == "default"
+    # Short conversational messages take the fast profile for speed.
+    assert llm.profile_for("hello") == "fast"
+    assert llm.profile_for(
+        "can you give me some thoughts about how my week looked overall "
+        "and what patterns you notice") == "default"
 
 
 class StubAgent:

@@ -1,6 +1,7 @@
-diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' v5-fresh/README.md v5-target/README.md
---- a/README.md	2026-10-20 07:19:05.342714515 +0000
-+++ b/README.md	2026-10-20 07:19:05.365698549 +0000
+Only in /dev-server/external/Email-agent: .openminion
+diff -ru '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' a/README.md b/README.md
+--- a/README.md	2026-10-20 07:21:28.144510925 +0000
++++ b/README.md	2026-10-20 07:17:47.464946387 +0000
 @@ -61,7 +61,11 @@
  key, base URL, timeout); a profile that only sets a model inherits the default
  provider and key. Parallelism and deadlines are also configured there:
@@ -14,29 +15,10 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=
  must be enabled in the same Google Cloud project.
  
  ```
-@@ -226,5 +230,7 @@
- export OPENAI_API_KEY=...
- ```
- 
--`MAILKEEP_AGENT=rules` forces the parser; `MAILKEEP_AGENT_TIMEOUT` (default 180)
--bounds one agent turn.
-+`MAILKEEP_AGENT=rules` forces the parser; `MAILKEEP_AGENT_TIMEOUT` (default 120)
-+bounds one agent turn. Messages that clearly ask for a mailbox change (score
-+≥ `MAILKEEP_ACTION_THRESHOLD`, default 0.6) skip the model entirely: Mailkeep
-+shows an execution brief and waits for Approve before anything changes.
-diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' v5-fresh/mailkeep/agent.py v5-target/mailkeep/agent.py
---- a/mailkeep/agent.py	2026-10-20 07:19:05.343467739 +0000
-+++ b/mailkeep/agent.py	2026-10-20 07:19:05.366503529 +0000
-@@ -52,6 +52,8 @@
-   to review the card and press Approve. Never claim a write happened.
- - Mailkeep cannot send email. Drafts are the furthest it goes.
- - Be brief. The UI already shows the tool's tables; do not repeat them.
-+- Think fast: decide the command immediately, do not deliberate or restate
-+  the request. Final answers are at most two short sentences.
- """
- 
- _LEAK_MARKERS = ("[CONSTRAINTS & POLICY]", "[BUDGET TELEMETRY]", "budget_envelope_status")
-@@ -85,7 +87,7 @@
+diff -ru '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' a/mailkeep/agent.py b/mailkeep/agent.py
+--- a/mailkeep/agent.py	2026-10-20 07:21:28.145000865 +0000
++++ b/mailkeep/agent.py	2026-10-20 07:17:16.280555163 +0000
+@@ -87,7 +87,7 @@
      return kind, json.dumps(data, default=str)[:400]
  
  
@@ -45,7 +27,7 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=
      calls = 0
      from openminion import tool
  
-@@ -95,6 +97,8 @@
+@@ -97,6 +97,8 @@
          nonlocal calls
          if cancel.is_set() or time.monotonic() >= deadline:
              return "STOP: this turn was cancelled or timed out."
@@ -54,7 +36,7 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=
          if not isinstance(session, Session) or not isinstance(outcomes, list):
              return "ERROR: no active mailbox session."
          calls += 1
-@@ -242,24 +246,35 @@
+@@ -244,12 +246,14 @@
              self.cancel()
              raise
  
@@ -70,10 +52,9 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=
          try:
              if self.session.approval is not None:
                  return Outcome([Response("Review the pending approval first.")], self.session.approval)
-             direct = text.strip().startswith("/") or self.session.assistant.pending is not None
-             if self.mode != "openminion" or direct:
+@@ -258,15 +262,19 @@
                  return self.session.run_command(text)
-+            from . import llm
+             from . import llm
              import re
 +            step("Checking the request is about your mailbox")
 +            if llm.topic_guard_enabled() and llm.is_off_topic(text):
@@ -82,49 +63,27 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=
                  re.search(r"\b(analyze|analyse|compare)\b", text.lower()) and "trash" not in text.lower()
              ):
 -                return self._analysis_turn(text)
--            return self._agent_turn(text)
 +                return self._analysis_turn(text, step)
-+            if llm.action_intent(text) >= llm.action_threshold():
+             if llm.action_intent(text) >= llm.action_threshold():
 +                step("Preparing an execution brief")
-+                brief = self._action_brief(text)
-+                if brief is not None:
-+                    return brief
+                 brief = self._action_brief(text)
+                 if brief is not None:
+                     return brief
+-            return self._agent_turn(text)
 +            return self._agent_turn(text, step)
          finally:
              self._busy.clear()
              self._chat_lock.release()
-@@ -303,17 +318,41 @@
-                 pass
-             (OPENMINION_DIR / "runtime" / f"{token}.json").unlink(missing_ok=True)
+@@ -331,17 +339,20 @@
+         )
+         return Outcome([brief] + outcome.responses, outcome.approval)
  
 -    def _agent_turn(self, text: str) -> Outcome:
-+    def _action_brief(self, text: str) -> Outcome | None:
-+        """Fast path for clear action requests: preview the change and ask
-+        for permission without waiting on a model turn.
-+
-+        Returns None when the deterministic parser cannot handle the text,
-+        so the caller falls back to the model agent.
-+        """
-+        try:
-+            outcome = self.session.run_command(text)
-+        except Exception:
-+            return None
-+        if outcome.approval is None:
-+            # The parser produced no write preview (e.g. it misread the text
-+            # as a search), so let the model interpret the request instead.
-+            return None
-+        brief = Response(
-+            f"Plan: {text.strip()}. Review the execution brief below and "
-+            "press Approve to run it, or Cancel to keep everything unchanged."
-+        )
-+        return Outcome([brief] + outcome.responses, outcome.approval)
-+
 +    def _agent_turn(self, text: str, step=lambda _msg: None) -> Outcome:
          from . import llm
          outcomes = []
          cancel = self._cancel
--        deadline = time.monotonic() + llm.positive_seconds("MAILKEEP_AGENT_TIMEOUT", 180)
-+        deadline = time.monotonic() + llm.positive_seconds("MAILKEEP_AGENT_TIMEOUT", 120)
+         deadline = time.monotonic() + llm.positive_seconds("MAILKEEP_AGENT_TIMEOUT", 120)
          reply = ""
          try:
 -            future = self._pool.submit(self._run_model, llm.profile_for(text),
@@ -139,7 +98,7 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=
              if reply.lower().startswith("openminion:"):
                  reply = reply.split(":", 1)[1].strip()
              if any(marker in reply for marker in _LEAK_MARKERS):
-@@ -354,10 +393,11 @@
+@@ -382,10 +393,11 @@
              responses.append(Response(reply))
          return Outcome(responses, self.session.approval)
  
@@ -147,13 +106,12 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=
 +    def _analysis_turn(self, text: str, step=lambda _msg: None) -> Outcome:
          from . import llm
          cancel = self._cancel
--        deadline = time.monotonic() + llm.positive_seconds("MAILKEEP_AGENT_TIMEOUT", 180)
-+        deadline = time.monotonic() + llm.positive_seconds("MAILKEEP_AGENT_TIMEOUT", 120)
+         deadline = time.monotonic() + llm.positive_seconds("MAILKEEP_AGENT_TIMEOUT", 120)
 +        step("Reading a mailbox snapshot for the analysts")
          # Snapshot of the current numbered list. Only the owner performs a read
          # if there is no list; analysts cannot alter rows, approvals or Gmail.
          initial = None
-@@ -382,6 +422,7 @@
+@@ -410,6 +422,7 @@
              active = []
              for profile, role in jobs[start:start + llm.concurrency()]:
                  try:
@@ -161,72 +119,23 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=
                      future = self._pool.submit(self._run_model, profile,
                          f"Request: {text}\nTask: {role}\nImmutable snapshot: {snapshot}", [], deadline, cancel)
                      active.append((profile, future))
-diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' v5-fresh/mailkeep/llm.py v5-target/mailkeep/llm.py
---- a/mailkeep/llm.py	2026-10-20 07:19:05.344707479 +0000
-+++ b/mailkeep/llm.py	2026-10-20 07:19:05.367848718 +0000
-@@ -356,4 +356,115 @@
-         return "classifier"
-     if re.search(r"\b(find|search|open|list|labels)\b", text):
+diff -ru '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' a/mailkeep/llm.py b/mailkeep/llm.py
+--- a/mailkeep/llm.py	2026-10-20 07:21:28.145789622 +0000
++++ b/mailkeep/llm.py	2026-10-20 07:16:56.929249153 +0000
+@@ -358,6 +358,9 @@
          return "fast"
-+    if action_intent(text) >= action_threshold():
-+        return "fast"
+     if action_intent(text) >= action_threshold():
+         return "fast"
 +    # Short conversational messages rarely need the slow default model.
 +    if len(text.split()) <= 8:
 +        return "fast"
      return "default"
-+
-+
-+# Verbs that change mailbox state. Kept broad on purpose: the score, not any
-+# single word, decides, and read-only verbs pull it back down.
-+_ACTION_VERBS = (
-+    "change", "modify", "update", "rename", "edit", "archive", "delete",
-+    "remove", "label", "unlabel", "mark", "move", "restore", "trash",
-+    "star", "unstar", "mute", "snooze", "forward", "send", "reply", "draft",
-+    "compose", "clean", "clear", "organize", "organise", "fix",
-+)
-+_READ_ONLY = (
-+    "find", "search", "show", "list", "open", "read", "what", "which", "how",
-+    "summarize", "summarise", "analyze", "analyse", "explain", "tell",
-+)
-+
-+
-+def action_intent(text: str) -> float:
-+    """Confidence 0..1 that the message asks for a mailbox-changing action.
-+
-+    Weighted cues, not a single keyword: an action verb is the base, row
-+    references and mailbox targets raise it, question marks and read-only
-+    verbs lower it. Compare against action_threshold().
-+    """
-+    import re
-+
-+    words = text.lower()
-+    score = 0.0
-+    verbs = sum(1 for v in _ACTION_VERBS if re.search(rf"\b{re.escape(v)}\b", words))
-+    if verbs:
-+        score += 0.45 + 0.1 * min(verbs - 1, 2)
-+    if re.search(r"\b\d+([,-]\s*\d+)*\b", words):
-+        score += 0.2  # a row reference ("archive 1,3")
-+    if re.search(r"\b(emails?|mails?|mailbox|messages?|inbox|newsletters?|label|subject|sender)\b", words):
-+        score += 0.15
-+    if re.search(r"\b(all|every|each)\b", words):
-+        score += 0.1
-+    if "?" in text:
-+        score -= 0.25
-+    if any(re.search(rf"\b{re.escape(v)}\b", words) for v in _READ_ONLY):
-+        score -= 0.4
-+    return max(0.0, min(1.0, score))
-+
-+
-+def action_threshold() -> float:
-+    """Confidence at which a message is treated as an action request (0..1)."""
-+    raw = setting("MAILKEEP_ACTION_THRESHOLD")
-+    try:
-+        value = float(raw) if raw else 0.6
-+    except ValueError:
-+        raise ValueError("MAILKEEP_ACTION_THRESHOLD must be a number from 0 to 1") from None
-+    if not 0.0 <= value <= 1.0:
-+        raise ValueError("MAILKEEP_ACTION_THRESHOLD must be from 0 to 1")
-+    return value
+ 
+ 
+@@ -412,3 +415,56 @@
+     if not 0.0 <= value <= 1.0:
+         raise ValueError("MAILKEEP_ACTION_THRESHOLD must be from 0 to 1")
+     return value
 +
 +
 +# Mailbox vocabulary for the topic guard. Mailkeep is a Gmail assistant;
@@ -280,9 +189,9 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=
 +    if "?" in text and re.match(r"^\s*(what|who|where|when|why|how)\b", stripped):
 +        return True
 +    return False
-diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' v5-fresh/mailkeep/static/index.html v5-target/mailkeep/static/index.html
---- a/mailkeep/static/index.html	2026-10-20 07:19:05.345332098 +0000
-+++ b/mailkeep/static/index.html	2026-10-20 07:19:05.368278334 +0000
+diff -ru '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' a/mailkeep/static/index.html b/mailkeep/static/index.html
+--- a/mailkeep/static/index.html	2026-10-20 07:21:28.146138174 +0000
++++ b/mailkeep/static/index.html	2026-10-20 07:17:34.415368627 +0000
 @@ -46,6 +46,7 @@
    th { color: var(--muted); font-weight: 500; }
    td.id { font: 11px var(--mono); color: var(--muted); }
@@ -351,9 +260,9 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=
  };
  $("input").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); } };
  ["find unread emails", "find invoices from last month", "analyze trash", "labels", "help"].forEach((s) => {
-diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' v5-fresh/mailkeep/tasks.py v5-target/mailkeep/tasks.py
---- a/mailkeep/tasks.py	2026-10-20 07:19:05.345394278 +0000
-+++ b/mailkeep/tasks.py	2026-10-20 07:19:05.368342721 +0000
+diff -ru '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' a/mailkeep/tasks.py b/mailkeep/tasks.py
+--- a/mailkeep/tasks.py	2026-10-20 07:21:28.146173807 +0000
++++ b/mailkeep/tasks.py	2026-10-20 07:17:24.165280305 +0000
 @@ -53,24 +53,46 @@
                           if not v["future"].done() or now - v["created"] < 3600}
              if len(self.jobs) >= 100:
@@ -411,24 +320,13 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=
  
      def cancel(self, job_id: str) -> bool:
          with self.lock:
-diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' v5-fresh/scripts/gmail.env.example v5-target/scripts/gmail.env.example
---- a/scripts/gmail.env.example	2026-10-20 07:19:05.346172326 +0000
-+++ b/scripts/gmail.env.example	2026-10-20 07:19:05.371529178 +0000
-@@ -48,10 +48,21 @@
+diff -ru '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' a/scripts/gmail.env.example b/scripts/gmail.env.example
+--- a/scripts/gmail.env.example	2026-10-20 07:21:28.146846852 +0000
++++ b/scripts/gmail.env.example	2026-10-20 07:17:48.336742059 +0000
+@@ -58,6 +58,11 @@
+ # your Approve. Lower it to catch more phrasings, raise it to ask the model.
+ # MAILKEEP_ACTION_THRESHOLD=0.6
  
- # --- Parallel agents and deadlines --------------------------------------
- # MAILKEEP_MAX_AGENTS=3                  # parallel model workers, 1-16
--# MAILKEEP_AGENT_TIMEOUT=180             # whole-turn deadline in seconds
-+# MAILKEEP_AGENT_TIMEOUT=120             # whole-turn deadline in seconds
- # MAILKEEP_GMAIL_TIMEOUT=20              # per Gmail API call in seconds
- # MAILKEEP_GMAIL_WORKERS=6               # parallel Gmail reads, 1-16
- 
-+# --- Action detection ----------------------------------------------------
-+# Confidence (0-1) that a message asks for a mailbox change. At or above the
-+# threshold Mailkeep skips the model, shows an execution brief, and waits for
-+# your Approve. Lower it to catch more phrasings, raise it to ask the model.
-+# MAILKEEP_ACTION_THRESHOLD=0.6
-+
 +# --- Topic guard ----------------------------------------------------------
 +# Refuse questions that are clearly not about your mailbox (weather, jokes,
 +# homework, ...) instantly, without a model call. on/off, default on.
@@ -437,9 +335,9 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=
  # --- Fix for "Error 403: access_denied" ---------------------------------
  # Google only lets Test users of the client's own Cloud project sign in.
  # Put that exact address here so the account chooser pre-selects it, then
-diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' v5-fresh/tests/test_multillm.py v5-target/tests/test_multillm.py
---- a/tests/test_multillm.py	2026-10-20 07:19:05.347614169 +0000
-+++ b/tests/test_multillm.py	2026-10-20 07:19:05.375667307 +0000
+diff -ru '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' a/tests/test_multillm.py b/tests/test_multillm.py
+--- a/tests/test_multillm.py	2026-10-20 07:21:28.147852569 +0000
++++ b/tests/test_multillm.py	2026-10-20 07:18:44.522060921 +0000
 @@ -85,7 +85,11 @@
      assert llm.profile_for("plan my week from this inbox") == "reasoning"
      assert llm.profile_for("triage the inbox") == "classifier"
@@ -453,90 +351,9 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=
  
  
  class StubAgent:
-@@ -142,3 +146,80 @@
-     assert jobs.status("r2")["state"] == "failed"
-     with pytest.raises(KeyError):
-         jobs.cancel("missing")
-+
-+
-+def test_action_intent_scores():
-+    from mailkeep import llm
-+
-+    # Clear change requests score at or above the default 0.6 threshold.
-+    assert llm.action_intent("archive 1,3") >= 0.6
-+    assert llm.action_intent("change the label on 2 to Finance") >= 0.6
-+    assert llm.action_intent("modify message 4 subject") >= 0.6
-+    assert llm.action_intent("delete all newsletters") >= 0.6
-+    # Questions and reads stay below it.
-+    assert llm.action_intent("what changed in my inbox?") < 0.6
-+    assert llm.action_intent("find invoices") < 0.6
-+    assert llm.action_intent("show me unread emails") < 0.6
-+    assert llm.action_intent("hello") < 0.6
-+
-+
-+def test_action_threshold_validation(monkeypatch):
-+    from mailkeep import llm
-+
-+    assert llm.action_threshold() == 0.6
-+    monkeypatch.setattr(llm, "setting", lambda name: "0.8" if name == "MAILKEEP_ACTION_THRESHOLD" else "")
-+    assert llm.action_threshold() == 0.8
-+    monkeypatch.setattr(llm, "setting", lambda name: "2" if name == "MAILKEEP_ACTION_THRESHOLD" else "")
-+    with pytest.raises(ValueError):
-+        llm.action_threshold()
-+
-+
-+def test_action_brief_asks_permission_without_model(monkeypatch):
-+    from mailkeep import agent as agent_mod
-+    from mailkeep.demo import DemoGmailClient
-+    from mailkeep.session import Session
-+
-+    monkeypatch.setattr(agent_mod, "resolve_mode", lambda: ("openminion", "test"))
-+    monkeypatch.setattr(agent_mod, "trace", lambda kind, text: None)
-+    from mailkeep import llm
-+    monkeypatch.setattr(llm, "describe", lambda: [])
-+
-+    session = Session(DemoGmailClient())
-+    session.run_command("find unread emails")  # give the list row numbers
-+    agent = agent_mod.MailkeepAgent(session)
-+
-+    def no_model(*args, **kwargs):
-+        raise AssertionError("the model must not run for a clear action request")
-+
-+    monkeypatch.setattr(agent, "_run_model", no_model)
-+    out = agent.chat("archive 1")
-+    assert out.approval is not None
-+    assert "execution brief" in out.responses[0].text.lower()
-+    # Nothing changed yet: the write waits for the user's Approve.
-+    approved = session.resolve(out.approval.id, True)
-+    assert approved.responses
-+
-+
-+def test_action_brief_falls_back_to_model(monkeypatch):
-+    from mailkeep import agent as agent_mod
-+    from mailkeep.demo import DemoGmailClient
-+    from mailkeep.session import Session
-+
-+    monkeypatch.setattr(agent_mod, "resolve_mode", lambda: ("openminion", "test"))
-+    monkeypatch.setattr(agent_mod, "trace", lambda kind, text: None)
-+    from mailkeep import llm
-+    monkeypatch.setattr(llm, "describe", lambda: [])
-+
-+    session = Session(DemoGmailClient())
-+    agent = agent_mod.MailkeepAgent(session)
-+    called = []
-+
-+    def fake_run_model(profile, prompt, tools, deadline, cancel):
-+        called.append(profile)
-+        return "model answer"
-+
-+    monkeypatch.setattr(agent, "_run_model", fake_run_model)
-+    # Scores as an action but the parser cannot handle it -> model fallback.
-+    out = agent.chat("change all my emails somehow")
-+    assert called == ["fast"]
-+    assert any("model answer" in r.text for r in out.responses)
-diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=*.pyc' '--exclude=.pytest_cache' '--exclude=qwerty.patch' v5-fresh/tests/test_thinking.py v5-target/tests/test_thinking.py
---- a/tests/test_thinking.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/tests/test_thinking.py	2026-10-20 07:19:05.377309351 +0000
+Only in b/tests: test_thinking.py
+--- a/tests/test_thinking.py	2026-10-20 07:15:34.756964976 +0000
++++ b/tests/test_thinking.py	2026-10-20 07:17:41.866870672 +0000
 @@ -0,0 +1,80 @@
 +"""Visible thinking steps, speed routing and the off-topic guard."""
 +import threading

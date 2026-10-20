@@ -61,7 +61,11 @@ Task-specific models are optional per-profile overrides in the same file —
 key, base URL, timeout); a profile that only sets a model inherits the default
 provider and key. Parallelism and deadlines are also configured there:
 `MAILKEEP_MAX_AGENTS` (parallel model workers), and the `MAILKEEP_AGENT_TIMEOUT`,
-`MAILKEEP_GMAIL_TIMEOUT` and `MAILKEEP_GMAIL_WORKERS` seconds. The Gmail API
+`MAILKEEP_GMAIL_TIMEOUT` and `MAILKEEP_GMAIL_WORKERS` seconds. While a turn
+runs, the chat shows the agent's live thinking steps (profile chosen, mailbox
+commands run, analysts at work). `MAILKEEP_TOPIC_GUARD` (on/off, default on)
+refuses questions that are clearly not about your mailbox instantly, without
+spending a model call. The Gmail API
 must be enabled in the same Google Cloud project.
 
 ```

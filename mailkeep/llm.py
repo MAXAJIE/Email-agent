@@ -358,6 +358,9 @@ def profile_for(text: str) -> str:
         return "fast"
     if action_intent(text) >= action_threshold():
         return "fast"
+    # Short conversational messages rarely need the slow default model.
+    if len(text.split()) <= 8:
+        return "fast"
     return "default"
 
 
@@ -412,3 +415,56 @@ def action_threshold() -> float:
     if not 0.0 <= value <= 1.0:
         raise ValueError("MAILKEEP_ACTION_THRESHOLD must be from 0 to 1")
     return value
+
+
+# Mailbox vocabulary for the topic guard. Mailkeep is a Gmail assistant;
+# a message with none of these terms and a clear non-mailbox intent is
+# refused instantly instead of spending a model call on it.
+_MAILBOX_TERMS = (
+    "mail", "email", "e-mail", "inbox", "gmail", "message", "draft",
+    "reply", "sender", "subject", "newsletter", "spam", "trash", "label",
+    "archive", "attachment", "unread", "snooze", "mute", "star",
+    "invoice", "receipt",
+)
+_OFF_TOPIC_SIGNALS = (
+    "weather", "joke", "poem", "recipe", "cook", "stock", "crypto",
+    "bitcoin", "football", "soccer", "movie", "song", "lyrics", "game",
+    "homework", "math", "algebra", "code", "python", "javascript",
+    "translate", "capital of", "president", "lottery", "horoscope",
+)
+
+OFF_TOPIC_REPLY = (
+    "I'm Mailkeep, a Gmail assistant — I can only help with your mailbox "
+    "(find, label, archive, draft replies, triage and more). That request "
+    "looks unrelated to email, so I skipped it."
+)
+
+
+def topic_guard_enabled() -> bool:
+    """MAILKEEP_TOPIC_GUARD: on by default; off/0/no/false disables it."""
+    raw = (setting("MAILKEEP_TOPIC_GUARD") or "on").strip().lower()
+    return raw not in ("0", "off", "no", "false")
+
+
+def is_off_topic(text: str) -> bool:
+    """True when the message is clearly not about the mailbox.
+
+    Conservative on purpose: anything naming mail terms, greetings, or
+    short conversational openers passes; only a clear non-mailbox signal
+    or a general-knowledge question with no mailbox term is refused.
+    """
+    import re
+
+    words = text.lower()
+    if any(re.search(rf"\b{re.escape(t)}\b", words) for t in _MAILBOX_TERMS):
+        return False
+    stripped = words.strip()
+    if len(stripped) <= 12:  # "hi", "hello", "thanks", "help"
+        return False
+    if re.search(r"\b(hi|hello|hey|thanks|thank you|help|sorry|yes|no|ok|okay)\b", stripped):
+        return False
+    if any(re.search(rf"\b{re.escape(s)}\b", words) for s in _OFF_TOPIC_SIGNALS):
+        return True
+    if "?" in text and re.match(r"^\s*(what|who|where|when|why|how)\b", stripped):
+        return True
+    return False

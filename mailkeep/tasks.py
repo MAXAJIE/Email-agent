@@ -53,24 +53,46 @@ class ChatJobs:
                          if not v["future"].done() or now - v["created"] < 3600}
             if len(self.jobs) >= 100:
                 raise RuntimeError("Task history is full; restart the local app after current work finishes")
-            future = self.pool.submit(agent.chat, text)
-            self.jobs[request_id] = {"future": future, "agent": agent,
-                                     "text": text, "created": now}
+            job = {"agent": agent, "text": text, "created": now, "steps": []}
+            self.jobs[request_id] = job
+
+            def run():
+                def note(msg):
+                    self.add_step(request_id, msg)
+                try:
+                    return agent.chat(text, note)
+                except TypeError:
+                    return agent.chat(text)  # test doubles without step support
+
+            try:
+                job["future"] = self.pool.submit(run)
+            except Exception:
+                del self.jobs[request_id]
+                raise
             return {"job_id": request_id}
+
+    def add_step(self, job_id: str, text: str) -> None:
+        """Record a thinking step for the UI; best-effort, never raises."""
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if job is not None and len(job["steps"]) < 50:
+                job["steps"].append(str(text)[:120])
 
     def status(self, job_id: str) -> dict:
         from .web import outcome_json
         with self.lock:
             job = self.jobs.get(job_id)
-        if job is None:
-            raise KeyError(job_id)
-        future = job["future"]
-        if not future.done():
-            return {"state": "running"}
+            if job is None:
+                raise KeyError(job_id)
+            future = job.get("future")
+            steps = list(job["steps"])
+        if future is None or not future.done():
+            return {"state": "running", "steps": steps}
         try:
-            return {"state": "completed", "outcome": outcome_json(future.result())}
+            return {"state": "completed", "steps": steps, "outcome": outcome_json(future.result())}
         except Exception:
-            return {"state": "failed", "error": "The task failed. Check the local console; no request was retried."}
+            return {"state": "failed", "steps": steps,
+                    "error": "The task failed. Check the local console; no request was retried."}
 
     def cancel(self, job_id: str) -> bool:
         with self.lock:

@@ -87,7 +87,7 @@ def _event_text(event: object) -> tuple[str, str]:
     return kind, json.dumps(data, default=str)[:400]
 
 
-def _build_tool(session, outcomes, cancel, deadline):
+def _build_tool(session, outcomes, cancel, deadline, on_step=None):
     calls = 0
     from openminion import tool
 
@@ -97,6 +97,8 @@ def _build_tool(session, outcomes, cancel, deadline):
         nonlocal calls
         if cancel.is_set() or time.monotonic() >= deadline:
             return "STOP: this turn was cancelled or timed out."
+        if callable(on_step):
+            on_step(f"Running mailbox command: {command[:60]}")
         if not isinstance(session, Session) or not isinstance(outcomes, list):
             return "ERROR: no active mailbox session."
         calls += 1
@@ -244,12 +246,14 @@ class MailkeepAgent:
             self.cancel()
             raise
 
-    def chat(self, text: str) -> Outcome:
+    def chat(self, text: str, on_step=None) -> Outcome:
         if not self._chat_lock.acquire(blocking=False):
             return Outcome([Response("A mailbox turn is already running. Wait or cancel it first.")])
         # A new, irreversible event per turn: an old worker never sees it cleared.
         self._cancel = threading.Event()
         self._busy.set()
+        # Best-effort progress notes for the UI's thinking bubble.
+        step = on_step if callable(on_step) else (lambda _msg: None)
         try:
             if self.session.approval is not None:
                 return Outcome([Response("Review the pending approval first.")], self.session.approval)
@@ -258,15 +262,19 @@ class MailkeepAgent:
                 return self.session.run_command(text)
             from . import llm
             import re
+            step("Checking the request is about your mailbox")
+            if llm.topic_guard_enabled() and llm.is_off_topic(text):
+                return Outcome([Response(llm.OFF_TOPIC_REPLY)])
             if re.search(r"\b(triage|classify|categorize|prioritize)\b", text.lower()) or (
                 re.search(r"\b(analyze|analyse|compare)\b", text.lower()) and "trash" not in text.lower()
             ):
-                return self._analysis_turn(text)
+                return self._analysis_turn(text, step)
             if llm.action_intent(text) >= llm.action_threshold():
+                step("Preparing an execution brief")
                 brief = self._action_brief(text)
                 if brief is not None:
                     return brief
-            return self._agent_turn(text)
+            return self._agent_turn(text, step)
         finally:
             self._busy.clear()
             self._chat_lock.release()
@@ -331,17 +339,20 @@ class MailkeepAgent:
         )
         return Outcome([brief] + outcome.responses, outcome.approval)
 
-    def _agent_turn(self, text: str) -> Outcome:
+    def _agent_turn(self, text: str, step=lambda _msg: None) -> Outcome:
         from . import llm
         outcomes = []
         cancel = self._cancel
         deadline = time.monotonic() + llm.positive_seconds("MAILKEEP_AGENT_TIMEOUT", 120)
         reply = ""
         try:
-            future = self._pool.submit(self._run_model, llm.profile_for(text),
-                self._with_history(text), [_build_tool(self.session, outcomes, cancel, deadline)],
+            profile = llm.profile_for(text)
+            step(f"Thinking with the {profile} model")
+            future = self._pool.submit(self._run_model, profile,
+                self._with_history(text), [_build_tool(self.session, outcomes, cancel, deadline, step)],
                 deadline, cancel)
             reply = self._wait(future, deadline, cancel)
+            step("Composing the reply")
             if reply.lower().startswith("openminion:"):
                 reply = reply.split(":", 1)[1].strip()
             if any(marker in reply for marker in _LEAK_MARKERS):
@@ -382,10 +393,11 @@ class MailkeepAgent:
             responses.append(Response(reply))
         return Outcome(responses, self.session.approval)
 
-    def _analysis_turn(self, text: str) -> Outcome:
+    def _analysis_turn(self, text: str, step=lambda _msg: None) -> Outcome:
         from . import llm
         cancel = self._cancel
         deadline = time.monotonic() + llm.positive_seconds("MAILKEEP_AGENT_TIMEOUT", 120)
+        step("Reading a mailbox snapshot for the analysts")
         # Snapshot of the current numbered list. Only the owner performs a read
         # if there is no list; analysts cannot alter rows, approvals or Gmail.
         initial = None
@@ -410,6 +422,7 @@ class MailkeepAgent:
             active = []
             for profile, role in jobs[start:start + llm.concurrency()]:
                 try:
+                    step(f"{profile.capitalize()} analyst is thinking")
                     future = self._pool.submit(self._run_model, profile,
                         f"Request: {text}\nTask: {role}\nImmutable snapshot: {snapshot}", [], deadline, cancel)
                     active.append((profile, future))

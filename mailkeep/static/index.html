@@ -46,6 +46,7 @@
   th { color: var(--muted); font-weight: 500; }
   td.id { font: 11px var(--mono); color: var(--muted); }
   .dots { display: inline-flex; gap: 4px; padding: 4px 0; }
+  .thinkstep { color: var(--muted); font-size: 12px; font-style: italic; margin-top: 4px; }
   .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: bounce 1.2s infinite; }
   .dots i:nth-child(2) { animation-delay: .15s; } .dots i:nth-child(3) { animation-delay: .3s; }
   .elapsed { font: 12px var(--mono); color: var(--muted); margin-left: 8px; }
@@ -133,7 +134,7 @@ async function api(path, body) {
     throw e;
   } finally { clearTimeout(timer); }
 }
-async function chatRequest(text) {
+async function chatRequest(text, think) {
   const request_id = crypto.randomUUID();
   let submitted;
   // Safe retries use the SAME request ID; the server never runs it twice.
@@ -157,6 +158,7 @@ async function chatRequest(text) {
         if (e.status && e.status < 500) throw e;
         await new Promise(r => setTimeout(r, 1000)); continue;
       }
+      if (think && Array.isArray(status.steps)) think.steps(status.steps);
       if (status.state === "completed") return status.outcome;
       if (status.state === "failed") throw new Error(status.error);
       if (status.state !== "running") throw new Error("Invalid task response");
@@ -199,10 +201,22 @@ function addBot(m, isError) {
 }
 function thinking() {
   const box = el("div", "msg"), dots = el("span", "dots"), sec = el("span", "elapsed", "");
-  dots.append(el("i"), el("i"), el("i")); box.append(dots, sec);
+  const stepLine = el("div", "thinkstep", "");
+  dots.append(el("i"), el("i"), el("i")); box.append(dots, sec, stepLine);
   const t = turn("bot", box), start = Date.now();
   const tick = setInterval(() => { const s = Math.round((Date.now() - start) / 1000); if (s >= 3) sec.textContent = s + "s"; }, 1000);
-  return { set: (txt) => { sec.textContent = txt; }, done: () => { clearInterval(tick); t.remove(); } };
+  let shown = 0;
+  return {
+    set: (txt) => { sec.textContent = txt; },
+    // Live thinking steps from the server; only the latest is shown.
+    steps: (list) => {
+      if (!list.length || list.length === shown) return;
+      shown = list.length;
+      stepLine.textContent = list[list.length - 1] + "…";
+      scroll();
+    },
+    done: () => { clearInterval(tick); t.remove(); }
+  };
 }
 function addApproval(a) {
   pendingApproval = true; lockComposer();
@@ -235,7 +249,7 @@ function lockComposer() {
 async function run(call) {
   busy = true; lockComposer(); const t = thinking();
   try {
-    const out = await call();
+    const out = await call(t);
     if (!out || !Array.isArray(out.messages)) throw new Error("Invalid task result");
     out.messages.forEach(m => addBot(m));
     if (out.approval) addApproval(out.approval);
@@ -253,7 +267,7 @@ $("form").onsubmit = (e) => {
   const text = $("input").value.trim();
   if (!text || busy || pendingApproval) return;
   $("input").value = ""; autosize(); addUser(text);
-  run(() => chatRequest(text));
+  run((t) => chatRequest(text, t));
 };
 $("input").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); } };
 ["find unread emails", "find invoices from last month", "analyze trash", "labels", "help"].forEach((s) => {
