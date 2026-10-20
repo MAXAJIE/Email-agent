@@ -36,6 +36,7 @@ from .config import (
 )
 from .demo import DemoGmailClient
 from .session import Outcome, Session
+from .tasks import ChatJobs
 
 STATIC = Path(__file__).with_name("static")
 
@@ -46,6 +47,7 @@ class App:
         self.limit = limit
         self.port = port
         self.token = secrets.token_urlsafe(24)
+        self.jobs = ChatJobs()
         self.login = WebLogin(ui_redirect_uri(port))
         self.lock = threading.Lock()
         self.agent: MailkeepAgent | None = None
@@ -142,6 +144,13 @@ def make_handler(app: App):
                 return self._send(200, page.encode(), "text/html; charset=utf-8")
             if url.path == "/oauth/callback":
                 return self._callback(parse_qs(url.query))
+            if url.path.startswith("/api/jobs/"):
+                if not self._authorized():
+                    return self._json(403, {"error": "forbidden"})
+                try:
+                    return self._json(200, app.jobs.status(url.path.rsplit("/", 1)[-1]))
+                except KeyError:
+                    return self._json(404, {"error": "Task not found"})
             if url.path == "/api/status":
                 if not self._authorized():
                     return self._json(403, {"error": "forbidden"})
@@ -213,14 +222,23 @@ def make_handler(app: App):
                 if route == "/api/logout":
                     app.disconnect()
                     return self._json(200, {"ok": True})
+                if route == "/api/cancel":
+                    return self._json(200, {"cancelled": app.jobs.cancel(str(body.get("job_id", "")))})
                 if route in {"/api/chat", "/api/approve"}:
                     if not app.ensure_connected() or app.agent is None:
                         return self._json(409, {"error": "Connect Gmail first."})
                     if route == "/api/chat":
-                        outcome = app.agent.chat(str(body.get("text", ""))[:4000])
+                        return self._json(202, app.jobs.submit(app.agent,
+                            str(body.get("text", ""))[:4000], str(body.get("request_id", ""))))
                     else:
+                        if app.agent._busy.is_set():
+                            return self._json(409, {"error": "Wait for the current turn to finish first."})
                         outcome = app.agent.session.resolve(str(body.get("id", "")), bool(body.get("approve")))
                     return self._json(200, outcome_json(outcome))
+            except (ValueError, KeyError) as exc:
+                return self._json(400, {"error": str(exc)})
+            except RuntimeError as exc:
+                return self._json(409, {"error": str(exc)})
             except ConfigError as exc:
                 return self._json(400, {"error": str(exc)})
             except Exception as exc:

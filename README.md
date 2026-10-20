@@ -54,8 +54,15 @@ other location. The same file picks the AI model: `MAILKEEP_LLM_PROVIDER`
 (`openrouter`, `gemini`, `portal`, `openai`, `nvidia`, or `custom`),
 `MAILKEEP_LLM_MODEL`, `MAILKEEP_LLM_API_KEY` (optional `MAILKEEP_LLM_BASE_URL`,
 `MAILKEEP_LLM_TIMEOUT`). For `custom`, the base URL is inferred from a
-recognised key (e.g. an NVIDIA `nvapi-` key) or from `OPENAI_BASE_URL`. The
-Gmail API must be enabled in the same Google Cloud project.
+recognised key (e.g. an NVIDIA `nvapi-` key) or from `OPENAI_BASE_URL`.
+Task-specific models are optional per-profile overrides in the same file —
+`MAILKEEP_LLM_FAST_*`, `MAILKEEP_LLM_REASONING_*`, `MAILKEEP_LLM_DRAFT_*`,
+`MAILKEEP_LLM_CLASSIFIER_*` and `MAILKEEP_LLM_DEFAULT_*` (provider, model, API
+key, base URL, timeout); a profile that only sets a model inherits the default
+provider and key. Parallelism and deadlines are also configured there:
+`MAILKEEP_MAX_AGENTS` (parallel model workers), and the `MAILKEEP_AGENT_TIMEOUT`,
+`MAILKEEP_GMAIL_TIMEOUT` and `MAILKEEP_GMAIL_WORKERS` seconds. The Gmail API
+must be enabled in the same Google Cloud project.
 
 ```
 .venv\Scripts\python.exe -m mailkeep login

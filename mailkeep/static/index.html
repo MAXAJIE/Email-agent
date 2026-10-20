@@ -117,14 +117,54 @@ function icon(name) {
 $("send").append(icon("send"));
 
 async function api(path, body) {
-  const res = await fetch(path, {
-    method: body === undefined ? "GET" : "POST",
-    headers: { "Content-Type": "application/json", "X-Mailkeep-Token": TOKEN },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({ error: "Bad response from Mailkeep" }));
-  if (!res.ok) { const e = new Error(data.error || res.statusText); e.status = res.status; throw e; }
-  return data;
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch(path, {
+      method: body === undefined ? "GET" : "POST", signal: controller.signal,
+      headers: { "Content-Type": "application/json", "X-Mailkeep-Token": TOKEN },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!data || typeof data !== "object") throw new Error("Invalid response from Mailkeep");
+    if (!res.ok) { const e = new Error(data.error || res.statusText); e.status = res.status; throw e; }
+    return data;
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("Connection timed out. The request was not replayed.");
+    throw e;
+  } finally { clearTimeout(timer); }
+}
+async function chatRequest(text) {
+  const request_id = crypto.randomUUID();
+  let submitted;
+  // Safe retries use the SAME request ID; the server never runs it twice.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { submitted = await api("/api/chat", { text, request_id }); break; }
+    catch (e) { if (e.status && e.status < 500 || attempt === 2) throw e; }
+  }
+  const stop = el("button", "", "Stop"); stop.type = "button";
+  stop.onclick = async () => {
+    stop.disabled = true;
+    try { await api("/api/cancel", { job_id: submitted.job_id }); }
+    catch (e) { stop.disabled = false; addBot({ text: e.message }, true); }
+  };
+  $("lock").append(stop);
+  const started = Date.now();
+  try {
+    while (Date.now() - started < 3600000) {
+      let status;
+      try { status = await api("/api/jobs/" + encodeURIComponent(submitted.job_id)); }
+      catch (e) {
+        if (e.status && e.status < 500) throw e;
+        await new Promise(r => setTimeout(r, 1000)); continue;
+      }
+      if (status.state === "completed") return status.outcome;
+      if (status.state === "failed") throw new Error(status.error);
+      if (status.state !== "running") throw new Error("Invalid task response");
+      await new Promise(r => setTimeout(r, 300));
+    }
+    await api("/api/cancel", { job_id: submitted.job_id });
+    throw new Error("Task deadline reached; cancellation requested.");
+  } finally { stop.remove(); }
 }
 function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -173,9 +213,13 @@ function addApproval(a) {
   yes.append(icon("check"), document.createTextNode("Approve"));
   no.append(icon("x"), document.createTextNode("Cancel"));
   const done = async (approve) => {
-    yes.disabled = no.disabled = true; pendingApproval = false;
-    card.classList.add("done"); row.replaceWith(el("div", "muted", approve ? "Approved." : "Cancelled."));
-    await run(() => api("/api/approve", { id: a.id, approve }));
+    yes.disabled = no.disabled = true;
+    const ok = await run(() => api("/api/approve", { id: a.id, approve }));
+    if (ok) {
+      pendingApproval = false; card.classList.add("done");
+      row.replaceWith(el("div", "muted", approve ? "Approval processed." : "Cancelled."));
+    } else { yes.disabled = no.disabled = false; }
+    lockComposer();
   };
   yes.onclick = () => done(true); no.onclick = () => done(false);
   row.append(yes, no); card.append(row); log.append(card); scroll();
@@ -189,27 +233,18 @@ function lockComposer() {
   else $("input").focus();
 }
 async function run(call) {
-  busy = true; lockComposer();
-  const t = thinking(), maxRetries = 3;   // retry 5xx with backoff like phase-2 chat, never 4xx
+  busy = true; lockComposer(); const t = thinking();
   try {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const out = await call();
-        t.done(); out.messages.forEach((m) => addBot(m));
-        if (out.approval) addApproval(out.approval);
-        break;
-      } catch (e) {
-        if (e.status >= 500 && attempt < maxRetries) {
-          t.set("retrying " + (attempt + 1) + "/" + maxRetries);
-          await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
-          continue;
-        }
-        t.done(); addBot({ text: e.message }, true);
-        if (e.status === 409) refresh();
-        break;
-      }
-    }
-  } finally { busy = false; lockComposer(); }
+    const out = await call();
+    if (!out || !Array.isArray(out.messages)) throw new Error("Invalid task result");
+    out.messages.forEach(m => addBot(m));
+    if (out.approval) addApproval(out.approval);
+    return true;
+  } catch (e) {
+    addBot({ text: e.message }, true);
+    if (e.status === 409) refresh();
+    return false;
+  } finally { t.done(); busy = false; lockComposer(); }
 }
 function autosize() { const i = $("input"); i.style.height = "auto"; i.style.height = Math.min(i.scrollHeight, 160) + "px"; }
 $("input").oninput = autosize;
@@ -218,7 +253,7 @@ $("form").onsubmit = (e) => {
   const text = $("input").value.trim();
   if (!text || busy || pendingApproval) return;
   $("input").value = ""; autosize(); addUser(text);
-  run(() => api("/api/chat", { text }));
+  run(() => chatRequest(text));
 };
 $("input").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); } };
 ["find unread emails", "find invoices from last month", "analyze trash", "labels", "help"].forEach((s) => {

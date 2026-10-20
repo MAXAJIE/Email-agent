@@ -10,7 +10,11 @@ from __future__ import annotations
 import base64
 import html
 import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
+from .config import setting
+from .llm import positive_seconds
 from datetime import datetime
 from email.message import EmailMessage
 from email.utils import parseaddr
@@ -162,9 +166,21 @@ def _error_reason(exc) -> str:
 class GmailClient:
     """Thin synchronous wrapper around the Gmail v1 API."""
 
-    def __init__(self, service):
-        self._service = service
+    def __init__(self, service, service_factory=None):
+        self._shared_service = service
+        self._service_factory = service_factory
+        self._local = threading.local()
         self._profile_email = ""
+
+    @property
+    def _service(self):
+        # httplib2.Http is not thread-safe. Each fetch worker needs its own
+        # authenticated connection, not a shared discovery resource.
+        if self._service_factory is None:
+            return self._shared_service
+        if not hasattr(self._local, "service"):
+            self._local.service = self._service_factory()
+        return self._local.service
 
     # -- reads ---------------------------------------------------------
     def profile_email(self) -> str:
@@ -214,11 +230,15 @@ class GmailClient:
     def fetch(self, message_ids: list[str]) -> list[Email]:
         if not message_ids:
             return []
-        workers = max(1, min(6, len(message_ids)))
+        raw = setting("MAILKEEP_GMAIL_WORKERS") or "6"
+        workers = max(1, min(16, int(raw), len(message_ids)))
+        # Injected services without a factory cannot safely fetch in parallel.
+        if self._service_factory is None:
+            workers = 1
 
         def get_one(message_id: str) -> Email | None:
             try:
-                message = (
+                message = self._read_retry(lambda: (
                     self._service.users()
                     .messages()
                     .get(
@@ -232,7 +252,7 @@ class GmailClient:
                         ),
                     )
                     .execute()
-                )
+                ))
             except Exception as exc:
                 raise GmailError(
                     f"Could not read message {message_id}: {_error_reason(exc)}"
@@ -242,6 +262,19 @@ class GmailClient:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             results = list(pool.map(get_one, message_ids))
         return [item for item in results if item is not None]
+
+    def _read_retry(self, call):
+        # At most two retries on transient failures; authentication/validation
+        # errors fail immediately. Transport timeout bounds each attempt.
+        for attempt in range(3):
+            try:
+                return call()
+            except Exception as exc:
+                status = getattr(getattr(exc, "resp", None), "status", None)
+                transient = status in {429, 500, 502, 503, 504} or isinstance(exc, (TimeoutError, ConnectionError, OSError))
+                if not transient or attempt == 2:
+                    raise
+                time.sleep(0.25 * 2 ** attempt)
 
     def get_full(self, message_id: str) -> Email:
         try:
@@ -381,10 +414,17 @@ class GmailClient:
 
 def build_client(credentials=None) -> GmailClient:
     from googleapiclient.discovery import build
+    from google_auth_httplib2 import AuthorizedHttp
+    import httplib2
 
     if credentials is None:
         from .auth import load_credentials
 
         credentials = load_credentials(interactive=True)
-    service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
-    return GmailClient(service)
+    timeout = positive_seconds("MAILKEEP_GMAIL_TIMEOUT", 20)
+
+    def service_factory():
+        http = AuthorizedHttp(credentials, http=httplib2.Http(timeout=timeout))
+        return build("gmail", "v1", http=http, cache_discovery=False)
+
+    return GmailClient(service_factory(), service_factory=service_factory)

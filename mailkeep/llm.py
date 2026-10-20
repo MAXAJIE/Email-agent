@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .config import ROOT, env_files, env_values, setting
@@ -45,6 +45,8 @@ class Preset:
     timeout_seconds: int = 120
     # Other spellings people use for the same key.
     alt_key_envs: tuple[str, ...] = ()
+    profile: str = "default"
+    api_key: str = field(default="", repr=False)
 
 
 PRESETS: dict[str, Preset] = {
@@ -116,6 +118,8 @@ def _opt(name: str) -> str:
 
 
 def _api_key(preset: Preset) -> str:
+    if preset.profile != "default":
+        return preset.api_key
     value = _opt("API_KEY") or setting(preset.key_env)
     for name in preset.alt_key_envs:
         value = value or setting(name)
@@ -152,8 +156,10 @@ def by_name(name: str) -> Preset | None:
     return PRESETS.get(name)
 
 
-def selected() -> Preset | None:
+def selected(profile: str = "default") -> Preset | None:
     """The configured provider (with model/base URL overrides applied)."""
+    if profile != "default":
+        return _selected_profile(profile)
     key = _opt("PROVIDER").strip().lower()
     key = ALIASES.get(key, key)
     if key:
@@ -258,3 +264,96 @@ def describe() -> list[str]:
         f"  ({' or '.join(names)})"
     )
     return lines
+
+
+PROFILES = ("default", "fast", "reasoning", "draft", "classifier")
+
+
+def _selected_profile(profile: str) -> Preset | None:
+    """A task-specific override of the default provider.
+
+    Each profile reads MAILKEEP_LLM_<PROFILE>_PROVIDER / _MODEL / _API_KEY /
+    _BASE_URL / _TIMEOUT. A model-only override inherits the default provider,
+    endpoint and key; a different provider never receives the default's key.
+    """
+    if profile not in PROFILES:
+        raise ValueError(f"Unknown model profile: {profile}")
+    prefix = f"MAILKEEP_LLM_{profile.upper()}_"
+    opt = lambda name: setting(prefix + name)
+    base = selected()
+    provider = opt("PROVIDER").lower()
+    provider = ALIASES.get(provider, provider)
+    if provider:
+        preset = by_name(provider)
+        if preset is None:
+            raise ValueError(f"{prefix}PROVIDER is unknown")
+    else:
+        preset = base
+    if preset is None:
+        return None
+    same_provider = base is not None and base.key == preset.key
+    endpoint = opt("BASE_URL") or (base.base_url if same_provider else preset.base_url)
+    model = opt("MODEL") or (base.model if same_provider else preset.model)
+    secret = opt("API_KEY")
+    if not secret and same_provider:
+        secret = _api_key(base)
+    if not secret:
+        secret = setting(preset.key_env)
+        for name in preset.alt_key_envs:
+            secret = secret or setting(name)
+    # No generic-key or prefix scan across other profiles: never send one
+    # vendor's credentials to a different vendor's endpoint.
+    timeout = positive_seconds(
+        prefix + "TIMEOUT", base.timeout_seconds if same_provider else preset.timeout_seconds
+    )
+    if not model or not endpoint:
+        raise ValueError(f"{prefix}MODEL and {prefix}BASE_URL must resolve to non-empty values")
+    return replace(
+        preset,
+        profile=profile,
+        model=model,
+        base_url=endpoint,
+        key_env=f"MAILKEEP_RUNTIME_{profile.upper()}_API_KEY",
+        api_key=secret,
+        timeout_seconds=int(timeout),
+    )
+
+
+def positive_seconds(name: str, default: float) -> float:
+    import math
+
+    raw = setting(name)
+    try:
+        value = float(raw) if raw else float(default)
+    except ValueError:
+        raise ValueError(f"{name} must be positive seconds") from None
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be finite positive seconds")
+    return value
+
+
+def concurrency() -> int:
+    raw = setting("MAILKEEP_MAX_AGENTS") or "3"
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError("MAILKEEP_MAX_AGENTS must be an integer from 1 to 16") from None
+    if not 1 <= value <= 16:
+        raise ValueError("MAILKEEP_MAX_AGENTS must be from 1 to 16")
+    return value
+
+
+def profile_for(text: str) -> str:
+    """Pick the model profile for a user message."""
+    import re
+
+    text = text.lower()
+    if re.search(r"\b(draft|reply|compose|write)\b", text):
+        return "draft"
+    if re.search(r"\b(reason|plan|compare|explain|prioritize|analyse|analyze)\b", text):
+        return "reasoning"
+    if re.search(r"\b(classify|categorize|triage)\b", text):
+        return "classifier"
+    if re.search(r"\b(find|search|open|list|labels)\b", text):
+        return "fast"
+    return "default"

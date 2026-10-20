@@ -88,4 +88,5 @@ def test_no_rule_answer_while_a_write_is_pending(openminion, quiet):
     out = failing_agent(openminion.ProviderError("no model"), session).chat("archive 1")
 
     assert session.calls == []
-    assert len(out.responses) == 1 and "Model provider failed" in out.responses[0].text
+    # A pending approval blocks the turn before the model is even attempted.
+    assert len(out.responses) == 1 and "pending approval" in out.responses[0].text
