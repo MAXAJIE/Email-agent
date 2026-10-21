@@ -82,7 +82,7 @@ def _chat(console: Console, backend, limit: int, *, yes: bool) -> int:
     mode = "demo data" if isinstance(backend, DemoGmailClient) else "Gmail"
     console.print(Panel(Text(BANNER), title="Mailkeep",
                         subtitle=f"{mode} | {account} | chat: {agent.mode}"))
-    console.print(Text("Type 'help' for commands. Ctrl+C stops a turn, Ctrl+D exits.", style="dim"))
+    console.print(Text("Type /help for commands. Ctrl+C stops a turn, Ctrl+D exits.", style="dim"))
 
     def step(message: str) -> None:
         console.print(Text(f"  ... {message}", style="dim"))

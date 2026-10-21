@@ -236,11 +236,16 @@ class GmailClient:
     def fetch(self, message_ids: list[str]) -> list[Email]:
         if not message_ids:
             return []
-        raw = setting("MAILKEEP_GMAIL_WORKERS") or "6"
-        workers = max(1, min(16, int(raw), len(message_ids)))
+        try:
+            requested = int(setting("MAILKEEP_GMAIL_WORKERS") or "6")
+        except ValueError:
+            requested = 6
+        workers = max(1, min(16, requested, len(message_ids)))
         # Injected services without a factory cannot safely fetch in parallel.
         if self._service_factory is None:
             workers = 1
+
+        failures: list[GmailError] = []
 
         def get_one(message_id: str) -> Email | None:
             try:
@@ -260,14 +265,22 @@ class GmailClient:
                     .execute()
                 ))
             except Exception as exc:
-                raise GmailError(
+                # One vanished/unreadable message must not discard the rest
+                # of the batch; only an all-failed batch is an error.
+                error = GmailError(
                     f"Could not read message {message_id}: {_error_reason(exc)}"
-                ) from exc
+                )
+                error.__cause__ = exc
+                failures.append(error)
+                return None
             return _parse_metadata(message)
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             results = list(pool.map(get_one, message_ids))
-        return [item for item in results if item is not None]
+        emails = [item for item in results if item is not None]
+        if failures and not emails:
+            raise failures[0]
+        return emails
 
     def _read_retry(self, call):
         # At most two retries on transient failures; authentication/validation
@@ -295,7 +308,12 @@ class GmailClient:
                 f"Could not open message {message_id}: {_error_reason(exc)}"
             ) from exc
         email = _parse_metadata(message)
-        body, attachments = _extract_body(message.get("payload") or {})
+        try:
+            body, attachments = _extract_body(message.get("payload") or {})
+        except ValueError as exc:  # binascii.Error on malformed base64
+            raise GmailError(
+                f"Could not decode message {message_id}: {exc}"
+            ) from exc
         email.body = body
         email.attachments = attachments
         return email
@@ -399,15 +417,19 @@ class GmailClient:
         in_reply_to: str = "",
         references: str = "",
     ) -> DraftResult:
-        raw = build_raw_message(
-            to=to,
-            cc=cc,
-            subject=subject,
-            body=body,
-            thread_id=thread_id,
-            in_reply_to=in_reply_to,
-            references=references,
-        )
+        try:
+            raw = build_raw_message(
+                to=to,
+                cc=cc,
+                subject=subject,
+                body=body,
+                thread_id=thread_id,
+                in_reply_to=in_reply_to,
+                references=references,
+            )
+        except ValueError as exc:
+            # e.g. CR/LF smuggled into Message-ID/References of the original.
+            raise GmailError(f"Could not build the draft: {exc}") from exc
         message: dict = {"raw": raw}
         if thread_id:
             message["threadId"] = thread_id

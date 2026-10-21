@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -168,11 +170,31 @@ def env_values() -> dict[str, str]:
 # "saved" values are written to SETTINGS_FILE (inside the gitignored
 # .openminion/ folder, so keys never leave the machine).
 SETTINGS_FILE = ROOT / ".openminion" / "mailkeep-settings.json"
+# web.py serves each request on its own thread; guard the module caches.
+_overrides_lock = threading.RLock()
 _session_overrides: dict[str, str] = {}
 _saved_cache: tuple[float, dict[str, str]] = (-1.0, {})
 
 
+def write_private(path: Path, text: str) -> None:
+    """Write a secret file created 0600 from the start (no world-readable window)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    try:
+        os.chmod(path, 0o600)  # O_CREAT mode is ignored for pre-existing files
+    except OSError as exc:
+        print(f"mailkeep: warning: could not restrict permissions on {path}: {exc}",
+              file=sys.stderr)
+
+
 def _saved_overrides() -> dict[str, str]:
+    with _overrides_lock:
+        return _saved_overrides_locked()
+
+
+def _saved_overrides_locked() -> dict[str, str]:
     global _saved_cache
     try:
         mtime = SETTINGS_FILE.stat().st_mtime
@@ -190,14 +212,20 @@ def _saved_overrides() -> dict[str, str]:
 
 def ui_override(name: str) -> tuple[str, str]:
     """(value, "session"|"saved"|"") set through the UI settings panel."""
-    if _session_overrides.get(name):
-        return _session_overrides[name], "session"
-    value = _saved_overrides().get(name, "")
+    with _overrides_lock:
+        if _session_overrides.get(name):
+            return _session_overrides[name], "session"
+        value = _saved_overrides().get(name, "")
     return (value, "saved") if value else ("", "")
 
 
 def set_ui_override(name: str, value: str, *, persist: bool) -> None:
     """Set (or clear, with value="") a UI setting. persist=True writes the file."""
+    with _overrides_lock:
+        _set_ui_override_locked(name, value, persist=persist)
+
+
+def _set_ui_override_locked(name: str, value: str, *, persist: bool) -> None:
     global _saved_cache
     value = value.strip()
     _session_overrides.pop(name, None)
@@ -207,12 +235,7 @@ def set_ui_override(name: str, value: str, *, persist: bool) -> None:
             saved[name] = value
         else:
             saved.pop(name, None)
-        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        SETTINGS_FILE.write_text(json.dumps({"values": saved}, indent=2), encoding="utf-8")
-        try:
-            os.chmod(SETTINGS_FILE, 0o600)
-        except OSError:
-            pass
+        write_private(SETTINGS_FILE, json.dumps({"values": saved}, indent=2))
         _saved_cache = (-1.0, {})
     if value and not persist:
         _session_overrides[name] = value
@@ -330,12 +353,7 @@ def save_client_file(raw: str) -> str:
             "Expected the JSON downloaded from Google Cloud Console (an 'installed' "
             "or 'web' object with client_id and client_secret)."
         )
-    CLIENT_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CLIENT_SECRET_FILE.write_text(json.dumps(data), encoding="utf-8")
-    try:
-        os.chmod(CLIENT_SECRET_FILE, 0o600)
-    except OSError:
-        pass
+    write_private(CLIENT_SECRET_FILE, json.dumps(data))
     return kind
 
 

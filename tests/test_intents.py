@@ -48,7 +48,7 @@ def test_new_draft_captures_recipient_subject_and_body():
 
 
 def test_trash_report_forms():
-    for text in ("analyze trash", "what's in my trash", "trash report", "empty trash"):
+    for text in ("/trash", "what's in my trash", "trash report", "empty trash"):
         intent = parse_intent(text)
         assert intent.kind == "trash_report", text
 

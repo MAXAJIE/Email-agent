@@ -411,6 +411,16 @@ class DemoGmailClient:
             if clause in query and classify_email(email) != category:
                 return False
 
+        # Gmail inbox tabs: Primary is "none of the other tabs".
+        tabs = {"CATEGORY_SOCIAL", "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS"}
+        for match in re.finditer(r"category:(\w+)", lowered):
+            tab = match.group(1)
+            if tab == "primary":
+                if tabs & set(email.labels):
+                    return False
+            elif f"CATEGORY_{tab.upper()}" not in email.labels:
+                return False
+
         for match in re.finditer(r'from:("[^"]+"|\S+)', query, re.I):
             sender = match.group(1).strip('"').lower()
             if sender not in self._haystack(email):
@@ -418,7 +428,7 @@ class DemoGmailClient:
 
         residual = re.sub(r"\([^)]*\)", " ", query)
         residual = re.sub(
-            r"\b(?:from|in|is|has|newer_than|older_than|after|before):\S+",
+            r"\b(?:from|in|is|has|category|newer_than|older_than|after|before):\S+",
             " ",
             residual,
         )

@@ -50,6 +50,29 @@ _REVISION = re.compile(
     r"one\s+more|again|different|version)\b",
     re.I,
 )
+# "use the first email content", "based on message 3", "forward #2",
+# "summarise the latest mail": the body comes from a listed message.
+_ORDINALS = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3,
+             "fourth": 4, "4th": 4, "fifth": 5, "5th": 5, "sixth": 6, "6th": 6,
+             "seventh": 7, "7th": 7, "eighth": 8, "8th": 8, "ninth": 9, "9th": 9,
+             "tenth": 10, "10th": 10, "top": 1, "latest": 1, "newest": 1,
+             "most recent": 1}
+_ORD = "|".join(sorted(map(re.escape, _ORDINALS), key=len, reverse=True))
+_MSG = r"(?:e-?mail|mail|message|msg|one|row)"
+_SOURCE_VERB = (r"(?:use|using|based\s+on|from|forward|fwd|summari[sz]e|summary\s+of|"
+                r"quote|quoting|share|sharing|copy|include|with|content\s+of|info(?:rmation)?\s+(?:in|from))")
+_SOURCE_REFS = [
+    re.compile(rf"\b(?:the\s+)?({_ORD})\s+(?:\w+\s+)?{_MSG}\b", re.I),        # the first email
+    re.compile(rf"\b{_MSG}\s*(?:#|no\.?|number)?\s*(\d{{1,3}})\b", re.I),   # email 3 / message #3
+    re.compile(r"#\s*(\d{1,3})\b"),                                          # #3
+    re.compile(rf"\b{_SOURCE_VERB}\s+(?:the\s+)?(?:row\s+)?(\d{{1,3}})\b", re.I),  # forward 3
+]
+_SOURCE_HINT = re.compile(rf"\b{_SOURCE_VERB}\b|\bcontent\b|\bit\s+says\b", re.I)
+_FILLER = {"a", "an", "the", "that", "this", "to", "for", "me", "please", "and", "it", "of",
+           "send", "sends", "sent", "draft", "write", "compose", "prepare", "create", "make",
+           "email", "e-mail", "mail", "message", "note", "letter", "new", "can", "you",
+           "could", "would", "i", "want", "need", "my", "him", "her", "them"}
+
 _NEW_REQUEST = re.compile(r"\b(?:new|another|separate|second)\s+(?:draft|e-?mail|mail|message)\b", re.I)
 
 
@@ -75,6 +98,29 @@ QUESTIONS = {
 LABELS = {"to": "recipient", "purpose": "message", "subject": "subject", "ref": "message to reply to"}
 
 
+def source_ref(text: str) -> str:
+    """Row number of a listed email the user wants the draft built from, or ''."""
+    if not _SOURCE_HINT.search(text):
+        return ""
+    for pattern in _SOURCE_REFS:
+        match = pattern.search(text)
+        if match:
+            value = match.group(1).lower()
+            return str(_ORDINALS.get(value, value))
+    return ""
+
+
+def free_purpose(text: str) -> str:
+    """Whatever the user said beyond 'draft an email to X' (>= 3 real words)."""
+    rest = EMAIL_RE.sub(" ", text)
+    rest = re.sub(rf"^\s*(?:please\s+)?(?:can\s+you\s+)?{_DRAFT_VERB}\s+(?:me\s+)?(?:(?:a|an|the)\s+)?"
+                  r"(?:new\s+)?(?:e-?mail|mail|message|note|letter|draft)?\s*(?:that\s+)?(?:send\s+)?(?:to|for)?\s*"
+                  r"[,;:]?\s*", "", rest, flags=re.I)
+    words = re.findall(r"[\w'’-]+", rest)
+    content = [w for w in words if w.lower() not in _FILLER]
+    return _clean(" ".join(words)) if len(content) >= 3 else ""
+
+
 @dataclass
 class Frame:
     kind: str  # "draft_new" | "draft_reply"
@@ -85,6 +131,12 @@ class Frame:
     def score(self, model_available: bool = True) -> float:
         weights = WEIGHTS[self.kind]
         total = sum(w for slot, w in weights.items() if self.slots.get(slot))
+        # Content taken from a listed email covers the message and its subject.
+        if self.kind == "draft_new" and self.slots.get("source"):
+            if not self.slots.get("purpose"):
+                total += weights["purpose"]
+            if not self.slots.get("subject"):
+                total += weights["subject"]
         # A clear subject lets a model write a sensible body: half credit.
         if self.kind == "draft_new" and model_available and not self.slots.get("purpose") \
                 and self.slots.get("subject"):
@@ -93,7 +145,9 @@ class Frame:
 
     def missing(self) -> list[str]:
         order = ["to", "ref", "purpose", "subject"]
-        return [s for s in order if s in WEIGHTS[self.kind] and not self.slots.get(s)]
+        filled = {"purpose", "subject"} if self.slots.get("source") else set()
+        return [s for s in order if s in WEIGHTS[self.kind] and not self.slots.get(s)
+                and s not in filled]
 
     def ready(self, model_available: bool = True) -> bool:
         if self.kind == "draft_new" and not self.slots.get("to"):
@@ -111,7 +165,8 @@ class Frame:
         return QUESTIONS[slot]
 
     def checklist(self) -> str:
-        return ", ".join(f"{LABELS[s]} {'✓' if self.slots.get(s) else '…'}" for s in WEIGHTS[self.kind])
+        have = lambda s: self.slots.get(s) or (s in {"purpose", "subject"} and self.slots.get("source"))
+        return ", ".join(f"{LABELS[s]} {'✓' if have(s) else '…'}" for s in WEIGHTS[self.kind])
 
 
 def _clean(text: str) -> str:
@@ -155,6 +210,15 @@ def extract(kind: str, text: str) -> dict:
     tone = next((t for t in _TONES if re.search(rf"\b{t}\b", text, re.I)), "")
     if tone:
         slots["tone"] = tone
+    if kind == "draft_new":
+        source = source_ref(text)
+        if source:
+            slots["source"] = source
+        if not slots.get("purpose") and not source:
+            slots["purpose"] = free_purpose(_SUBJECT.sub(" ", text)) if slots.get("subject") \
+                else free_purpose(text)
+    if text.strip():
+        slots["request"] = text.strip()[:2000]
     return {k: v for k, v in slots.items() if v}
 
 
@@ -165,7 +229,10 @@ def start(kind: str, text: str) -> Frame:
 def merge_answer(frame: Frame, text: str) -> Frame:
     """Fold the user's follow-up into the frame."""
     for key, value in extract(frame.kind, text).items():
-        frame.slots[key] = value
+        if key == "request" and frame.slots.get("request"):
+            frame.slots["request"] = (frame.slots["request"] + "\n" + value)[:4000]
+        else:
+            frame.slots[key] = value
     asked = frame.asked
     answer = _clean(text)
     if asked and not frame.slots.get(asked) and answer:

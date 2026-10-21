@@ -1,8 +1,10 @@
 # Mailkeep runtime.
-google-api-python-client>=2.149
-google-auth-oauthlib>=1.2
-google-auth-httplib2>=0.2
-rich>=13
+google-api-python-client>=2.149,<3
+google-auth-oauthlib>=1.2,<2
+google-auth-httplib2>=0.2,<1
+# Imported directly by gmail.py (per-thread Http); do not rely on it transitively.
+httplib2>=0.19,<1
+rich>=13,<15
 # Agent layer. Without a configured model provider Mailkeep falls back to its
 # rule-based parser, so the UI still works.
 openminion>=0.1.7

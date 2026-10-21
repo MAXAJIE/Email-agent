@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import sys
 import threading
 import time
 import urllib.parse
@@ -41,12 +42,9 @@ from .config import (
 
 
 def _write_private(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    from .config import write_private
+
+    write_private(path, text)
 
 
 def mcp_token_path(email: str, base: Path = TOKEN_DIR) -> Path:
@@ -205,15 +203,20 @@ def cached_credentials():
     from google.oauth2.credentials import Credentials
 
     try:
-        credentials = Credentials.from_authorized_user_file(str(TOKEN_FILE), list(SCOPES))
-    except Exception:
+        # No scopes argument: keep the scopes actually recorded in the token.
+        # Forcing today's SCOPES makes refresh of an older, narrower token
+        # fail with invalid_scope (refresh may only request a subset).
+        credentials = Credentials.from_authorized_user_file(str(TOKEN_FILE))
+    except Exception as exc:
+        print(f"mailkeep: cached token unreadable: {exc}", file=sys.stderr)
         return None
     if credentials.expired:
         if not credentials.refresh_token:
             return None
         try:
             credentials.refresh(Request())
-        except Exception:
+        except Exception as exc:
+            print(f"mailkeep: token refresh failed, sign in again: {exc}", file=sys.stderr)
             return None
         save_credentials(credentials, "")  # persist refresh; MCP refreshes its own copy
     return credentials if credentials.valid else None
@@ -312,7 +315,7 @@ class WebLogin:
         # the http://localhost callback; PKCE verifier stays on the flow.
         flow.fetch_token(code=code)
         lacking = missing_scopes(flow.credentials.scopes)
-        if flow.credentials.scopes and lacking:
+        if lacking:
             # Gmail boxes unticked on Google's page: signed in, but no access.
             raise AuthRequired(
                 "Signed in, but Gmail access was not granted ("

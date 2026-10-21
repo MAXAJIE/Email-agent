@@ -39,6 +39,7 @@ class Intent:
     subject: str = ""
     limit: int = 20
     all_matching: bool = False
+    scope: str = ""  # human description of where a junk review looks
 
 
 def _clean_refs(value: str) -> str:
@@ -186,6 +187,60 @@ def _unlabel_intent(stripped: str, limit: int) -> Intent | None:
     return None
 
 
+# Gmail inbox tabs. "primary inbox", "social tab", "the updates category".
+_TABS = {"primary": "Primary", "social": "Social", "promotions": "Promotions",
+         "promotion": "Promotions", "updates": "Updates", "forums": "Forums"}
+_TAB_RE = re.compile(
+    r"\b(primary|social|promotions?|updates|forums)\b(?:\s+(?:inbox|tab|category|folder|mail|e-?mails?))?",
+    re.I)
+_JUNK_VERB = re.compile(
+    r"\b(?:seek|seeking|look(?:ing)?\s+for|search(?:ing)?\s+for|hunt|find|finding|spot|detect|identify|"
+    r"flag|pick\s+out|sort\s+out|weed\s+out|analy[sz]e|analy[sz]ing|review|scan|go\s+through|check)\b"
+    r"[^.?!]{0,80}?\b(?:trash|junk|spam|rubbish|clutter)\b", re.I)
+
+
+def junk_scope(text: str) -> tuple[str, str]:
+    """(gmail_query, description) for where a junk review should look.
+
+    "" means: the last list shown, else the newest inbox messages.
+    """
+    from .classify import category_query, detect_categories
+    from .query import extract_sender, time_clause
+
+    clauses, names = [], []
+    lowered = text.lower()
+    for match in _TAB_RE.finditer(text):
+        tab = _TABS[match.group(1).lower()]
+        clause = f"category:{tab.lower()}"
+        if clause not in clauses:
+            clauses.append(clause)
+            names.append(f"{tab} tab")
+    categories = [c for c in detect_categories(text) if c != "promotions" or not clauses]
+    if categories:
+        clauses.append(category_query(categories))
+        names.extend(categories)
+    if re.search(r"\bunread\b", lowered):
+        clauses.append("is:unread"); names.append("unread")
+    if re.search(r"\bstarred\b", lowered):
+        clauses.append("is:starred"); names.append("starred")
+    sender = extract_sender(text)
+    if sender:
+        clauses.append(f"from:{sender}"); names.append(f"from {sender}")
+    when = time_clause(text)
+    if when:
+        clauses.append(when); names.append(when)
+    if clauses and not re.search(r"\b(?:all\s+mail|everything|archived?)\b", lowered):
+        clauses.insert(0, "in:inbox")
+    elif re.search(r"\binbox\b", lowered):
+        clauses.append("in:inbox"); names.append("inbox")
+    return " ".join(clauses), ", ".join(names)
+
+
+def triage_intent(text: str, limit: int) -> Intent:
+    query, scope = junk_scope(text)
+    return Intent(kind="triage", text=text, query=query, scope=scope, limit=limit)
+
+
 def is_triage(text: str) -> bool:
     """Junk-likelihood triage phrasing, not a request about the Trash folder."""
     lowered = text.lower()
@@ -194,6 +249,9 @@ def is_triage(text: str) -> bool:
     if re.search(r"\bin\s+the\s+trash\b|\btrash\s+folder\b|\bin\s+trash\b|\bmy\s+trash\b"
                  r"|\bthe\s+trash\b|\bempty\s+(?:my\s+|the\s+)?trash\b", lowered):
         return False
+    # "analyze trash", "seek for trash mail in primary": find junk, not open Trash.
+    if _JUNK_VERB.search(text):
+        return True
     return bool(re.search(
         r"\b(?:most\s+|more\s+)?(?:likely|probably|possibly|plausibly|apt)\s+(?:to\s+be\s+)?"
         r"(?:like\s+)?(?:a\s+|an\s+)?(?:trash|junk|spam)\b"
@@ -275,6 +333,8 @@ def parse_intent(text: str, *, default_limit: int = 20) -> Intent:
             return Intent(kind="status", limit=limit)
         if command in {"labels", "label-list"}:
             return Intent(kind="labels", limit=limit)
+        if command in {"junk", "triage", "spam"}:
+            return triage_intent(rest, limit)
         if command in {"trash"}:
             return Intent(
                 kind="trash_report", limit=max(limit, 200)
@@ -311,7 +371,7 @@ def parse_intent(text: str, *, default_limit: int = 20) -> Intent:
         return Intent(kind="trash_report", limit=max(limit, 200))
 
     if is_triage(stripped):
-        return Intent(kind="triage", text=stripped, limit=limit)
+        return triage_intent(stripped, limit)
 
     trash = _trash_intent(stripped, limit)
     if trash:

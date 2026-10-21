@@ -149,15 +149,93 @@ def extract_sender(text: str) -> str:
     return sender if "@" in sender else sender.lower()
 
 
+_UNITS = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "seventeen": 17, "eighteen": 18, "nineteen": 19,
+}
+_TENS = {
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
+    "seventy": 70, "eighty": 80, "ninety": 90,
+}
+_IDIOMS = {"a couple of": 2, "a couple": 2, "couple of": 2, "a dozen": 12,
+           "dozen": 12, "a pair of": 2, "a single": 1, "single": 1}
+_NUM_WORD = "|".join(sorted([*_UNITS, *_TENS, "hundred"], key=len, reverse=True))
+_WORD_NUMBER_RE = re.compile(
+    rf"\b(?:{_NUM_WORD})(?:(?:[\s-]+|\s+and\s+)(?:{_NUM_WORD}))*\b", re.I)
+_IDIOM_RE = re.compile(
+    r"\b(" + "|".join(sorted(map(re.escape, _IDIOMS), key=len, reverse=True)) + r")\b", re.I)
+
+_NOUN = r"(?:e-?mails?|mails?|messages?|msgs?|results?|threads?|ones?|items?|letters?)"
+_ADJ = r"(?:[a-z][\w'-]*\s+){0,3}?"  # "5 most recent unread emails"
+_TIME_UNIT = r"(?:minutes?|hours?|days?|weeks?|months?|years?|mins?|hrs?)"
+_COUNT_RES = [
+    # "5 emails", "five unread messages", "3 most recent ones"
+    re.compile(rf"\b(\d{{1,3}})\s+{_ADJ}{_NOUN}\b", re.I),
+    # "top 5", "latest 10", "last 3", "limit 1" (not "last 5 days")
+    re.compile(rf"\b(?:top|latest|newest|recent|last|first|limit(?:\s+to)?|max(?:imum)?|up\s+to)\s+(\d{{1,3}})\b(?!\s*{_TIME_UNIT}\b)", re.I),
+    # "show 5", "give me 3", "list 10"
+    re.compile(rf"\b(?:show|give|get|list|fetch|find|display|pull|read|see|open)\s+(?:me\s+)?(?:the\s+)?(\d{{1,3}})\b(?!\s*{_TIME_UNIT}\b)", re.I),
+]
+# "the most recent unread mail", "my latest email", "the last message" -> 1
+_SINGULAR_RE = re.compile(
+    r"\b(?:the|my|a|an|one|that|this)\s+(?:(?:very|single|only|most|recent|latest|newest|"
+    r"last|first|top|unread|new|starred|important|[a-z]+'s)\s+){0,4}"
+    r"(?:e-?mail|mail|message|msg|thread|letter)\b(?!s)", re.I)
+
+
+def _words_to_number(phrase: str) -> int | None:
+    current = 0
+    for word in re.split(r"[\s-]+", phrase.lower()):
+        if not word or word == "and":
+            continue
+        if word in _UNITS:
+            current += _UNITS[word]
+        elif word in _TENS:
+            current += _TENS[word]
+        elif word == "hundred":
+            current = (current or 1) * 100
+        else:
+            return None
+    return current
+
+
+def _normalise_numbers(text: str) -> str:
+    """Rewrite number words ("twenty-one", "a dozen") as digits."""
+    text = _IDIOM_RE.sub(lambda m: str(_IDIOMS[m.group(1).lower()]), text)
+
+    def repl(match: re.Match) -> str:
+        value = _words_to_number(match.group(0))
+        return match.group(0) if value is None else str(value)
+
+    return _WORD_NUMBER_RE.sub(repl, text)
+
+
 def extract_limit(text: str, default: int = 20) -> int:
-    match = _LIMIT_RE.search(text)
-    if not match:
-        return default
-    return max(1, min(200, int(match.group(1))))
+    """How many messages the user asked for; ``default`` when they did not say.
+
+    Understands digits ("5 emails", "top 10"), number words ("five", "twenty
+    one", "a dozen") and singular requests ("the most recent unread mail" -> 1).
+    Time spans ("last 5 days") are not counts.
+    """
+    normalised = _normalise_numbers(text or "")
+    for pattern in _COUNT_RES:
+        match = pattern.search(normalised)
+        if match:
+            return max(1, min(200, int(match.group(1))))
+    if _SINGULAR_RE.search(text or ""):
+        return 1
+    return default
+
+
+# Words that only describe how many / which end of the list, never search terms.
+_COUNT_WORDS = {"most", "recent", "latest", "newest", "top", "first", "last",
+                "single", "only", "dozen", "couple", "few", "limit"}
 
 
 def _residual_keywords(text: str, consumed: str) -> str:
-    text = _TIME_PHRASE_RE.sub(" ", text).lower()
+    text = _TIME_PHRASE_RE.sub(" ", _normalise_numbers(text)).lower()
     for phrase in consumed.split():
         text = text.replace(phrase.lower(), " ")
     tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9@._'+-]{1,}", text)
@@ -167,6 +245,7 @@ def _residual_keywords(text: str, consumed: str) -> str:
         if token.lower() not in _STOPWORDS
         and token.lower() not in _QUERY_ONLY_WORDS
         and not token.lower().isdigit()
+        and token.lower() not in _COUNT_WORDS
     ]
     return " ".join(kept[:8])
 

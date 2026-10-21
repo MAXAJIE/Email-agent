@@ -106,7 +106,7 @@ def test_new_draft_to_explicit_recipient():
 
 def test_trash_report_numbers_restore_candidates():
     _, assistant, _ = make_assistant()
-    response = assistant.handle("analyze trash")
+    response = assistant.handle("/trash")
     assert response.table is not None
     assert len(response.table.rows) == 5
     assert "Restore candidates: 5" in response.text
@@ -115,7 +115,7 @@ def test_trash_report_numbers_restore_candidates():
 
 def test_restore_moves_a_candidate_out_of_trash():
     _, assistant, _ = make_assistant()
-    assistant.handle("analyze trash")
+    assistant.handle("/trash")
     target = assistant.last_results[0]
     response = assistant.handle("restore 1")
     assert "Restored: 1 message(s)" in response.text
@@ -157,6 +157,6 @@ def test_out_of_range_reference_is_rejected():
 
 def test_help_and_status():
     _, assistant, _ = make_assistant()
-    assert "analyze trash" in assistant.handle("help").text
+    assert "/trash" in assistant.handle("help").text
     status = assistant.handle("status")
     assert "demo@mailkeep.app" in status.text

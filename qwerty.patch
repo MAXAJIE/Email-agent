@@ -1,234 +1,364 @@
-diff -ruN '--exclude=__pycache__' a/mailkeep/agent.py b/mailkeep/agent.py
---- a/mailkeep/agent.py	2026-10-21 02:15:31.230256762 +0000
-+++ b/mailkeep/agent.py	2026-10-21 02:15:17.334966742 +0000
-@@ -418,6 +418,14 @@
-                     return self.session.propose_command(command)
-                 except Exception as exc:
-                     return Outcome([Response(str(exc))])
-+            from .intents import is_triage
-+            if is_triage(text):
-+                # "which is most likely a trash" is a junk review, not the Trash folder.
-+                step("Planning a junk check")
-+                try:
-+                    return self.session.propose_command(text)
-+                except Exception as exc:
-+                    return Outcome([Response(str(exc))])
-             framed = self._frame_turn(text, step)
-             if framed is not None:
-                 return framed
-diff -ruN '--exclude=__pycache__' a/mailkeep/assistant.py b/mailkeep/assistant.py
---- a/mailkeep/assistant.py	2026-10-21 02:15:31.229930763 +0000
-+++ b/mailkeep/assistant.py	2026-10-21 02:15:18.336955516 +0000
-@@ -183,6 +183,8 @@
-             return self._find(intent)
-         if intent.kind == "trash_report":
-             return self._trash_report(intent)
-+        if intent.kind == "triage":
-+            return self._triage(intent)
-         if intent.kind == "open":
-             return self._open(intent)
-         if intent.kind == "label":
-@@ -420,6 +422,43 @@
-         )
-         return Response("\n".join(lines), table=table, hint=hint)
+diff -ruN a/mailkeep/assistant.py b/mailkeep/assistant.py
+--- a/mailkeep/assistant.py	2026-10-21 02:57:37.318836058 +0000
++++ b/mailkeep/assistant.py	2026-10-21 02:57:37.534257748 +0000
+@@ -23,14 +23,16 @@
+ • show label Finance — list messages in an existing label
+ • rename label Finance to Accounts — rename an existing user label
+ • restore 1-2 · archive 3 · mark 1 read · delete 4
+-• analyze trash — trash report + restore candidates
++• find junk in primary — suggest junk to clean up (any tab or type: social,
++  promotions, updates, newsletters, notifications, unread, "from amazon"…)
++• /trash — report on the Trash folder + restore candidates
  
-+    def _triage(self, intent: Intent) -> Response:
-+        """Suggest which current messages look like junk; never changes anything."""
-+        from .classify import classify_email
+ Drafts
+ • draft a reply to 2 saying thanks — draft in the same thread
+ • draft to bob@example.com about Q4 saying ... — new draft
+ 
+ Other
+-• labels · status · help · quit
++• /labels · /status · /help · /quit
+ 
+ Numbers refer to the last list you saw. Every change is previewed and needs your approval. Mailkeep only creates drafts; it never sends mail.
+ """
+@@ -158,7 +160,7 @@
+         if intent.kind == "quit":
+             return Response("Bye.")
+         if intent.kind == "noop":
+-            return Response("", hint="Type 'help' for examples.")
++            return Response("", hint="Type /help for examples.")
+         if intent.kind == "greeting":
+             return Response(
+                 "Mailkeep here. I can find mail, label it, draft replies and audit "
+@@ -177,7 +179,7 @@
+         if intent.kind == "unknown":
+             return Response(
+                 "I did not understand that.",
+-                hint="Type 'help' for commands, or /search followed by a Gmail query.",
++                hint="Type /help for commands, or /search followed by a Gmail query.",
+             )
+         if intent.kind in {"find", "find_raw"}:
+             return self._find(intent)
+@@ -221,7 +223,7 @@
+             return self._draft_reply(intent)
+         if intent.kind == "draft_new":
+             return self._draft_new(intent)
+-        return Response("I did not understand that.", hint="Type 'help'.")
++        return Response("I did not understand that.", hint="Type /help.")
+ 
+     # -- pending questions --------------------------------------------
+     def _continue_pending(self, text: str) -> Response:
+@@ -239,7 +241,7 @@
+                 query=pending.get("query", ""),
+                 all_matching=bool(pending.get("all_matching")),
+             )
+-        return Response("State reset.", hint="Type 'help'.")
++        return Response("State reset.", hint="Type /help.")
+ 
+     # -- reads ---------------------------------------------------------
+     def _find(self, intent: Intent) -> Response:
+@@ -419,10 +421,15 @@
+         """Suggest which current messages look like junk; never changes anything."""
+         from .classify import classify_email
+ 
+-        emails = self.last_results or self.backend.search("in:inbox", intent.limit)
++        if intent.query:
++            # The user named where to look ("primary", "newsletters", ...).
++            emails = self.backend.search(intent.query, intent.limit)
++            source = f"newest in {intent.scope or intent.query}"
++        else:
++            emails = self.last_results or self.backend.search("in:inbox", intent.limit)
++            source = ("the messages in your last list" if self.last_results
++                      else "the newest inbox messages")
+         self.last_opened = None
+-        source = ("the messages in your last list" if self.last_results
+-                  else "the newest inbox messages")
+         scored = []
+         for email in emails:
+             category = classify_email(email)
+@@ -467,7 +474,7 @@
+             return [self.last_results[-1]]
+         if not self.last_results:
+             raise AssistantError(
+-                "No current list. Run a find or 'analyze trash' first."
++                "No current list. Run a find or /trash first."
+             )
+         indexes = _resolve_refs(spec, len(self.last_results))
+         return [self.last_results[index - 1] for index in indexes]
+diff -ruN a/mailkeep/console.py b/mailkeep/console.py
+--- a/mailkeep/console.py	2026-10-21 02:57:37.328955369 +0000
++++ b/mailkeep/console.py	2026-10-21 02:57:37.541800221 +0000
+@@ -82,7 +82,7 @@
+     mode = "demo data" if isinstance(backend, DemoGmailClient) else "Gmail"
+     console.print(Panel(Text(BANNER), title="Mailkeep",
+                         subtitle=f"{mode} | {account} | chat: {agent.mode}"))
+-    console.print(Text("Type 'help' for commands. Ctrl+C stops a turn, Ctrl+D exits.", style="dim"))
++    console.print(Text("Type /help for commands. Ctrl+C stops a turn, Ctrl+D exits.", style="dim"))
+ 
+     def step(message: str) -> None:
+         console.print(Text(f"  ... {message}", style="dim"))
+diff -ruN a/mailkeep/demo.py b/mailkeep/demo.py
+--- a/mailkeep/demo.py	2026-10-21 02:57:37.333052143 +0000
++++ b/mailkeep/demo.py	2026-10-21 02:57:37.543444913 +0000
+@@ -411,6 +411,16 @@
+             if clause in query and classify_email(email) != category:
+                 return False
+ 
++        # Gmail inbox tabs: Primary is "none of the other tabs".
++        tabs = {"CATEGORY_SOCIAL", "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS"}
++        for match in re.finditer(r"category:(\w+)", lowered):
++            tab = match.group(1)
++            if tab == "primary":
++                if tabs & set(email.labels):
++                    return False
++            elif f"CATEGORY_{tab.upper()}" not in email.labels:
++                return False
 +
-+        emails = self.last_results or self.backend.search("in:inbox", intent.limit)
-+        self.last_opened = None
-+        source = ("the messages in your last list" if self.last_results
-+                  else "the newest inbox messages")
-+        scored = []
-+        for email in emails:
-+            category = classify_email(email)
-+            weight = {"promotions": 3, "newsletters": 2, "notifications": 1}.get(category, 0)
-+            if weight:
-+                scored.append((weight, category, email))
-+        scored.sort(key=lambda item: (
-+            -item[0],
-+            item[2].date.timestamp() if item[2].date else 0.0,
-+            item[2].id,
-+        ))
-+        if not scored:
-+            return Response(
-+                f"Looked at {len(emails)} message(s) ({source}); none of them look like junk.",
-+                hint="Junk signs: promotions, newsletters, automated notifications.",
-+            )
-+        self.last_results = [email for _weight, _category, email in scored]
-+        rows = [
-+            [str(index), _clip(email.sender, 24), _clip(email.subject, 40), category, email.id]
-+            for index, (_weight, category, email) in enumerate(scored, start=1)
-+        ]
-+        return Response(
-+            f"Of {len(emails)} message(s) ({source}), {len(scored)} look like junk, "
-+            "most likely first: promotions are the strongest sign, then newsletters, "
-+            "then automated notifications.",
-+            table=Table(["#", "From", "Subject", "Type", "ID"], rows),
-+            hint="Suggestions only. Use 'delete 1-2' to move one to Trash after review.",
-+        )
-+
-     # -- references ----------------------------------------------------
-     def _one(self, spec: str) -> Email:
-         if spec.strip().lower() in {"last", "this", "it"} and self.last_opened:
-diff -ruN '--exclude=__pycache__' a/mailkeep/frames.py b/mailkeep/frames.py
---- a/mailkeep/frames.py	2026-10-21 02:15:31.229417312 +0000
-+++ b/mailkeep/frames.py	2026-10-21 02:15:20.489288766 +0000
-@@ -45,7 +45,9 @@
- _REVISION = re.compile(
-     r"\b(?:modify|change|revise|rewrite|re-?write|edit|update|tweak|adjust|redo|instead|"
-     r"shorter|longer|more\s+\w+|less\s+\w+|tone|add|remove|mention|include|drop|"
--    r"make\s+it|subject\s+(?:to|line)|sign\s+(?:it|off))\b",
-+    r"make\s+it|subject\s+(?:to|line)|sign\s+(?:it|off)|"
-+    r"better|worse|improve|polish|bad|not\s+good|don'?t\s+like|"
-+    r"one\s+more|again|different|version)\b",
-     re.I,
- )
- _NEW_REQUEST = re.compile(r"\b(?:new|another|separate|second)\s+(?:draft|e-?mail|mail|message)\b", re.I)
-diff -ruN '--exclude=__pycache__' a/mailkeep/intents.py b/mailkeep/intents.py
---- a/mailkeep/intents.py	2026-10-21 02:15:31.229563417 +0000
-+++ b/mailkeep/intents.py	2026-10-21 02:15:20.845394397 +0000
-@@ -186,10 +186,32 @@
+         for match in re.finditer(r'from:("[^"]+"|\S+)', query, re.I):
+             sender = match.group(1).strip('"').lower()
+             if sender not in self._haystack(email):
+@@ -418,7 +428,7 @@
+ 
+         residual = re.sub(r"\([^)]*\)", " ", query)
+         residual = re.sub(
+-            r"\b(?:from|in|is|has|newer_than|older_than|after|before):\S+",
++            r"\b(?:from|in|is|has|category|newer_than|older_than|after|before):\S+",
+             " ",
+             residual,
+         )
+diff -ruN a/mailkeep/intents.py b/mailkeep/intents.py
+--- a/mailkeep/intents.py	2026-10-21 02:57:37.340773374 +0000
++++ b/mailkeep/intents.py	2026-10-21 02:57:37.549826184 +0000
+@@ -39,6 +39,7 @@
+     subject: str = ""
+     limit: int = 20
+     all_matching: bool = False
++    scope: str = ""  # human description of where a junk review looks
+ 
+ 
+ def _clean_refs(value: str) -> str:
+@@ -186,6 +187,60 @@
      return None
  
  
-+def is_triage(text: str) -> bool:
-+    """Junk-likelihood triage phrasing, not a request about the Trash folder."""
++# Gmail inbox tabs. "primary inbox", "social tab", "the updates category".
++_TABS = {"primary": "Primary", "social": "Social", "promotions": "Promotions",
++         "promotion": "Promotions", "updates": "Updates", "forums": "Forums"}
++_TAB_RE = re.compile(
++    r"\b(primary|social|promotions?|updates|forums)\b(?:\s+(?:inbox|tab|category|folder|mail|e-?mails?))?",
++    re.I)
++_JUNK_VERB = re.compile(
++    r"\b(?:seek|seeking|look(?:ing)?\s+for|search(?:ing)?\s+for|hunt|find|finding|spot|detect|identify|"
++    r"flag|pick\s+out|sort\s+out|weed\s+out|analy[sz]e|analy[sz]ing|review|scan|go\s+through|check)\b"
++    r"[^.?!]{0,80}?\b(?:trash|junk|spam|rubbish|clutter)\b", re.I)
++
++
++def junk_scope(text: str) -> tuple[str, str]:
++    """(gmail_query, description) for where a junk review should look.
++
++    "" means: the last list shown, else the newest inbox messages.
++    """
++    from .classify import category_query, detect_categories
++    from .query import extract_sender, time_clause
++
++    clauses, names = [], []
 +    lowered = text.lower()
-+    if "trash" not in lowered and "junk" not in lowered and "spam" not in lowered:
-+        return False
-+    if re.search(r"\bin\s+the\s+trash\b|\btrash\s+folder\b|\bin\s+trash\b|\bmy\s+trash\b"
-+                 r"|\bthe\s+trash\b|\bempty\s+(?:my\s+|the\s+)?trash\b", lowered):
-+        return False
-+    return bool(re.search(
-+        r"\b(?:most\s+|more\s+)?(?:likely|probably|possibly|plausibly|apt)\s+(?:to\s+be\s+)?"
-+        r"(?:like\s+)?(?:a\s+|an\s+)?(?:trash|junk|spam)\b"
-+        r"|\b(?:which|what)\s+(?:of\s+(?:my|the)\s+)?(?:e-?mails?|messages?|mail|ones?)\b"
-+        r"[^?!.]*\b(?:trash|junk|spam)\b"
-+        r"|\b(?:looks?|seems?|feels?)\s+(?:like\s+)?(?:trash|junk|spam)\b"
-+        r"|\b(?:should|could|can)\s+be\s+(?:moved\s+to\s+)?(?:trash(?:ed)?|junk|spam)\b"
-+        r"|\b(?:trash|junk|spam)\s+(?:candidates?|nominees?|picks?|material)\b"
-+        r"|\b(?:e-?mails?|messages?|mail)\s+(?:that|which)\s+(?:look|are)\s+like\s+(?:trash|junk)\b",
-+        text, re.I))
++    for match in _TAB_RE.finditer(text):
++        tab = _TABS[match.group(1).lower()]
++        clause = f"category:{tab.lower()}"
++        if clause not in clauses:
++            clauses.append(clause)
++            names.append(f"{tab} tab")
++    categories = [c for c in detect_categories(text) if c != "promotions" or not clauses]
++    if categories:
++        clauses.append(category_query(categories))
++        names.extend(categories)
++    if re.search(r"\bunread\b", lowered):
++        clauses.append("is:unread"); names.append("unread")
++    if re.search(r"\bstarred\b", lowered):
++        clauses.append("is:starred"); names.append("starred")
++    sender = extract_sender(text)
++    if sender:
++        clauses.append(f"from:{sender}"); names.append(f"from {sender}")
++    when = time_clause(text)
++    if when:
++        clauses.append(when); names.append(when)
++    if clauses and not re.search(r"\b(?:all\s+mail|everything|archived?)\b", lowered):
++        clauses.insert(0, "in:inbox")
++    elif re.search(r"\binbox\b", lowered):
++        clauses.append("in:inbox"); names.append("inbox")
++    return " ".join(clauses), ", ".join(names)
 +
 +
- def _trash_intent(stripped: str, limit: int) -> Intent | None:
-     lowered = stripped.lower()
-     if "trash" not in lowered:
-         return None
-+    if is_triage(stripped):
-+        return None
-     if re.search(r"\b(?:emails?|messages?|search|find|list)\b", lowered):
-         return None
-     if _TRASH_VERBS.search(stripped) or re.match(
-@@ -288,6 +310,9 @@
-     if lowered in {"trash", "my trash", "the trash"}:
++def triage_intent(text: str, limit: int) -> Intent:
++    query, scope = junk_scope(text)
++    return Intent(kind="triage", text=text, query=query, scope=scope, limit=limit)
++
++
+ def is_triage(text: str) -> bool:
+     """Junk-likelihood triage phrasing, not a request about the Trash folder."""
+     lowered = text.lower()
+@@ -194,6 +249,9 @@
+     if re.search(r"\bin\s+the\s+trash\b|\btrash\s+folder\b|\bin\s+trash\b|\bmy\s+trash\b"
+                  r"|\bthe\s+trash\b|\bempty\s+(?:my\s+|the\s+)?trash\b", lowered):
+         return False
++    # "analyze trash", "seek for trash mail in primary": find junk, not open Trash.
++    if _JUNK_VERB.search(text):
++        return True
+     return bool(re.search(
+         r"\b(?:most\s+|more\s+)?(?:likely|probably|possibly|plausibly|apt)\s+(?:to\s+be\s+)?"
+         r"(?:like\s+)?(?:a\s+|an\s+)?(?:trash|junk|spam)\b"
+@@ -275,6 +333,8 @@
+             return Intent(kind="status", limit=limit)
+         if command in {"labels", "label-list"}:
+             return Intent(kind="labels", limit=limit)
++        if command in {"junk", "triage", "spam"}:
++            return triage_intent(rest, limit)
+         if command in {"trash"}:
+             return Intent(
+                 kind="trash_report", limit=max(limit, 200)
+@@ -311,7 +371,7 @@
          return Intent(kind="trash_report", limit=max(limit, 200))
  
-+    if is_triage(stripped):
-+        return Intent(kind="triage", text=stripped, limit=limit)
-+
+     if is_triage(stripped):
+-        return Intent(kind="triage", text=stripped, limit=limit)
++        return triage_intent(stripped, limit)
+ 
      trash = _trash_intent(stripped, limit)
      if trash:
-         return trash
-diff -ruN '--exclude=__pycache__' a/mailkeep/session.py b/mailkeep/session.py
---- a/mailkeep/session.py	2026-10-21 02:15:31.229658532 +0000
-+++ b/mailkeep/session.py	2026-10-21 02:15:21.861311434 +0000
-@@ -70,7 +70,8 @@
-             if intent.kind in {"unknown", "noop"}:
-                 return Outcome([Response("Which mailbox action do you want? "
-                                          "Tell me the target and the change, or the data to show.")])
--            if intent.kind not in {"find", "find_raw", "browse_label", "open", "labels", "trash_report"}:
-+            if intent.kind not in {"find", "find_raw", "browse_label", "open", "labels",
-+                                   "trash_report", "triage"}:
-                 return self.run_command(text)
-             target_id = ""
-             if intent.kind == "browse_label":
-@@ -84,6 +85,8 @@
-                 action = f"open message {intent.refs}: {email.subject!r} ({email.id})"
+diff -ruN a/mailkeep/router.py b/mailkeep/router.py
+--- a/mailkeep/router.py	2026-10-21 02:57:37.352905809 +0000
++++ b/mailkeep/router.py	2026-10-21 02:57:37.559802716 +0000
+@@ -24,7 +24,8 @@
+     "mailbox": {
+         "role": "default",
+         "description": "Reads or changes Gmail by running ONE Mailkeep command: find/search, "
+-                       "open N, labels, analyze trash, label/unlabel, archive, mark read, "
++                       "open N, labels, 'find junk in <tab/category>' (junk review, e.g. 'find junk in primary'), "
++                       "'/trash' (only when the user asks about the Trash folder itself), label/unlabel, archive, mark read, "
+                        "delete (to Trash), restore, show label NAME, rename label OLD to NEW. "
+                        "Interpreted commands stop at an approval card.",
+         "args": {"command": "one exact Mailkeep command; keep any number of messages the user asked for "
+diff -ruN a/mailkeep/session.py b/mailkeep/session.py
+--- a/mailkeep/session.py	2026-10-21 02:57:37.354944812 +0000
++++ b/mailkeep/session.py	2026-10-21 02:57:37.561715406 +0000
+@@ -86,7 +86,9 @@
              elif intent.kind == "labels":
                  action = "list your Gmail labels"
-+            elif intent.kind == "triage":
-+                action = "review your messages and list the ones that look like junk"
+             elif intent.kind == "triage":
+-                action = "review your messages and list the ones that look like junk"
++                where = (f"up to {intent.limit} messages in {intent.scope or intent.query}"
++                         if intent.query else "your messages")
++                action = f"review {where} and list the ones that look like junk"
              else:
                  action = f"analyze up to {intent.limit} messages in Trash"
              question = f"Did you mean to {action}?"
-diff -ruN '--exclude=__pycache__' a/tests/test_patch4_triage_revision.py b/tests/test_patch4_triage_revision.py
---- a/tests/test_patch4_triage_revision.py	1970-01-01 00:00:00.000000000 +0000
-+++ b/tests/test_patch4_triage_revision.py	2026-10-21 02:15:29.555228722 +0000
-@@ -0,0 +1,74 @@
-+"""Patch 4: action-aware triage intent + draft-feedback revisions."""
+diff -ruN a/mailkeep/static/index.html b/mailkeep/static/index.html
+--- a/mailkeep/static/index.html	2026-10-21 02:57:37.359978108 +0000
++++ b/mailkeep/static/index.html	2026-10-21 02:57:37.566453847 +0000
+@@ -320,7 +320,7 @@
+   run((t) => chatRequest(text, t));
+ };
+ $("input").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); } };
+-["find unread emails", "find invoices from last month", "analyze trash", "labels", "help"].forEach((s) => {
++["/search is:unread", "/search invoice newer_than:1m", "/junk primary", "/labels", "/help"].forEach((s) => {
+   const b = el("button", "", s); b.type = "button";
+   b.onclick = () => { if (!busy) { $("input").value = s; $("form").requestSubmit(); } };
+   $("suggest").append(b);
+diff -ruN a/tests/test_assistant.py b/tests/test_assistant.py
+--- a/tests/test_assistant.py	2026-10-21 02:57:37.431960090 +0000
++++ b/tests/test_assistant.py	2026-10-21 02:57:37.631144471 +0000
+@@ -106,7 +106,7 @@
+ 
+ def test_trash_report_numbers_restore_candidates():
+     _, assistant, _ = make_assistant()
+-    response = assistant.handle("analyze trash")
++    response = assistant.handle("/trash")
+     assert response.table is not None
+     assert len(response.table.rows) == 5
+     assert "Restore candidates: 5" in response.text
+@@ -115,7 +115,7 @@
+ 
+ def test_restore_moves_a_candidate_out_of_trash():
+     _, assistant, _ = make_assistant()
+-    assistant.handle("analyze trash")
++    assistant.handle("/trash")
+     target = assistant.last_results[0]
+     response = assistant.handle("restore 1")
+     assert "Restored: 1 message(s)" in response.text
+@@ -157,6 +157,6 @@
+ 
+ def test_help_and_status():
+     _, assistant, _ = make_assistant()
+-    assert "analyze trash" in assistant.handle("help").text
++    assert "/trash" in assistant.handle("help").text
+     status = assistant.handle("status")
+     assert "demo@mailkeep.app" in status.text
+diff -ruN a/tests/test_intents.py b/tests/test_intents.py
+--- a/tests/test_intents.py	2026-10-21 02:57:37.450766734 +0000
++++ b/tests/test_intents.py	2026-10-21 02:57:37.645728794 +0000
+@@ -48,7 +48,7 @@
+ 
+ 
+ def test_trash_report_forms():
+-    for text in ("analyze trash", "what's in my trash", "trash report", "empty trash"):
++    for text in ("/trash", "what's in my trash", "trash report", "empty trash"):
+         intent = parse_intent(text)
+         assert intent.kind == "trash_report", text
+ 
+diff -ruN a/tests/test_junk_scope.py b/tests/test_junk_scope.py
+--- a/tests/test_junk_scope.py	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/test_junk_scope.py	2026-10-21 02:57:37.684413940 +0000
+@@ -0,0 +1,53 @@
++"""Junk review looks where the user says; suggestion chips are slash commands."""
++from pathlib import Path
++
 +import pytest
 +
-+from mailkeep import agent as agent_mod
-+from mailkeep import frames, llm
-+from mailkeep.demo import DemoGmailClient
 +from mailkeep.intents import is_triage, parse_intent
-+from mailkeep.session import Session
 +
 +
-+def rules_agent(monkeypatch):
-+    monkeypatch.setattr(agent_mod, "resolve_mode", lambda: ("rules", "test"))
-+    monkeypatch.setattr(llm, "describe", lambda: [])
-+    return agent_mod.MailkeepAgent(Session(DemoGmailClient()))
++def test_screenshot_request_reviews_primary_not_trash_folder():
++    intent = parse_intent("analyze the file in primary inbox and seek for trash mail")
++    assert intent.kind == "triage"
++    assert "category:primary" in intent.query and "in:trash" not in intent.query
 +
 +
-+def test_triage_phrasing_is_not_the_trash_folder():
-+    text = "analyze in the mail, and tell me which is most likely a trash"
-+    assert is_triage(text)
-+    assert parse_intent(text).kind == "triage"
-+    assert not is_triage("what's in the trash")
-+    assert not is_triage("clean up my trash")
-+    assert parse_intent("what's in the trash").kind == "trash_report"
-+    assert parse_intent("empty the trash").kind == "trash_report"
++@pytest.mark.parametrize("text,clause", [
++    ("find junk in social", "category:social"),
++    ("which newsletters look like junk", "newsletter"),
++    ("scan unread mail for spam", "is:unread"),
++    ("/junk updates", "category:updates"),
++    ("find junk from amazon", "from:amazon"),
++])
++def test_named_scope_becomes_the_search(text, clause):
++    intent = parse_intent(text)
++    assert intent.kind == "triage" and clause in intent.query
 +
 +
-+def test_triage_proposes_then_runs_after_confirmation(monkeypatch):
-+    agent = rules_agent(monkeypatch)
-+    first = agent.chat("analyze in the mail, and tell me which is most likely a trash")
-+    assert first.approval is not None
-+    assert first.approval.phase == "interpret"
-+    assert "look like junk" in first.approval.question
-+    assert agent.session.assistant.last_results == []  # nothing executed yet
-+    done = agent.chat("yes")
-+    assert done.approval is None
-+    assert "look like junk" in done.responses[0].text
-+    assert done.responses[0].table is not None and done.responses[0].table.rows
++def test_bare_analyze_trash_is_a_junk_review():
++    assert parse_intent("analyze trash").kind == "triage"
 +
 +
-+def test_triage_reuses_last_results_when_list_is_empty(monkeypatch):
-+    agent = rules_agent(monkeypatch)
-+    agent.chat("find is:unread")
-+    agent.chat("which of my messages is most likely a trash?")
-+    agent.chat("yes")
-+    assistant = agent.session.assistant
-+    assert isinstance(assistant.last_results, list)
++def test_trash_folder_still_reachable():
++    for text in ("/trash", "what's in my trash", "empty the trash", "find emails in trash"):
++        assert not is_triage(text), text
++    assert parse_intent("/trash").kind == "trash_report"
 +
 +
-+def test_draft_feedback_still_bad_reaches_revision(monkeypatch):
-+    agent = rules_agent(monkeypatch)
-+    first = agent.chat("draft a mail to bob@example.com saying the meeting moved to Friday")
-+    assert first.approval is not None
-+    revised = agent.chat("still bad")
-+    assert revised.approval is not None, "the draft card must stay pending"
-+    text = revised.responses[0].text
-+    assert "Review the pending action first." not in text
-+    assert "draft" in text.lower() or "change" in text.lower()
++def test_junk_review_runs_on_named_scope():
++    from mailkeep.assistant import Assistant
++    from mailkeep.demo import DemoGmailClient
++
++    backend = DemoGmailClient()
++    seen = []
++    real = backend.search
++    backend.search = lambda q, limit=20: seen.append(q) or real(q, limit)
++    Assistant(backend).handle("/junk promotions")
++    assert seen and "category:promotions" in seen[0]
 +
 +
-+def test_draft_feedback_show_a_better_mail_reaches_revision(monkeypatch):
-+    agent = rules_agent(monkeypatch)
-+    agent.chat("draft a mail to bob@example.com saying the meeting moved to Friday")
-+    revised = agent.chat("show a better mail")
-+    assert revised.approval is not None
-+    assert "Review the pending action first." not in revised.responses[0].text
-+
-+
-+def test_new_draft_request_is_still_not_a_revision(monkeypatch):
-+    agent = rules_agent(monkeypatch)
-+    agent.chat("draft a mail to bob@example.com saying the meeting moved to Friday")
-+    assert not frames.is_revision("draft a new email to alice@example.com")
-+    assert frames.is_revision("make it more formal")
-+    assert frames.is_revision("still bad")
-+    assert frames.is_revision("show a better mail")
++def test_suggestion_chips_are_slash_commands():
++    html = (Path(__file__).parent.parent / "mailkeep" / "static" / "index.html").read_text(encoding="utf-8")
++    line = next(l for l in html.splitlines() if "forEach((s)" in l and "/help" in l)
++    chips = [c.strip(' "') for c in line.split("[", 1)[1].split("]", 1)[0].split(",")]
++    assert chips and all(c.startswith("/") for c in chips)

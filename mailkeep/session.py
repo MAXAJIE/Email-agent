@@ -86,7 +86,9 @@ class Session:
             elif intent.kind == "labels":
                 action = "list your Gmail labels"
             elif intent.kind == "triage":
-                action = "review your messages and list the ones that look like junk"
+                where = (f"up to {intent.limit} messages in {intent.scope or intent.query}"
+                         if intent.query else "your messages")
+                action = f"review {where} and list the ones that look like junk"
             else:
                 action = f"analyze up to {intent.limit} messages in Trash"
             question = f"Did you mean to {action}?"

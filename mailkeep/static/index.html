@@ -320,7 +320,7 @@ $("form").onsubmit = (e) => {
   run((t) => chatRequest(text, t));
 };
 $("input").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); } };
-["find unread emails", "find invoices from last month", "analyze trash", "labels", "help"].forEach((s) => {
+["/search is:unread", "/search invoice newer_than:1m", "/junk primary", "/labels", "/help"].forEach((s) => {
   const b = el("button", "", s); b.type = "button";
   b.onclick = () => { if (!busy) { $("input").value = s; $("form").requestSubmit(); } };
   $("suggest").append(b);

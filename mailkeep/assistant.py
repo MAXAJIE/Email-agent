@@ -23,14 +23,16 @@ Organize
 • show label Finance — list messages in an existing label
 • rename label Finance to Accounts — rename an existing user label
 • restore 1-2 · archive 3 · mark 1 read · delete 4
-• analyze trash — trash report + restore candidates
+• find junk in primary — suggest junk to clean up (any tab or type: social,
+  promotions, updates, newsletters, notifications, unread, "from amazon"…)
+• /trash — report on the Trash folder + restore candidates
 
 Drafts
 • draft a reply to 2 saying thanks — draft in the same thread
 • draft to bob@example.com about Q4 saying ... — new draft
 
 Other
-• labels · status · help · quit
+• /labels · /status · /help · /quit
 
 Numbers refer to the last list you saw. Every change is previewed and needs your approval. Mailkeep only creates drafts; it never sends mail.
 """
@@ -158,7 +160,7 @@ class Assistant:
         if intent.kind == "quit":
             return Response("Bye.")
         if intent.kind == "noop":
-            return Response("", hint="Type 'help' for examples.")
+            return Response("", hint="Type /help for examples.")
         if intent.kind == "greeting":
             return Response(
                 "Mailkeep here. I can find mail, label it, draft replies and audit "
@@ -177,7 +179,7 @@ class Assistant:
         if intent.kind == "unknown":
             return Response(
                 "I did not understand that.",
-                hint="Type 'help' for commands, or /search followed by a Gmail query.",
+                hint="Type /help for commands, or /search followed by a Gmail query.",
             )
         if intent.kind in {"find", "find_raw"}:
             return self._find(intent)
@@ -221,7 +223,7 @@ class Assistant:
             return self._draft_reply(intent)
         if intent.kind == "draft_new":
             return self._draft_new(intent)
-        return Response("I did not understand that.", hint="Type 'help'.")
+        return Response("I did not understand that.", hint="Type /help.")
 
     # -- pending questions --------------------------------------------
     def _continue_pending(self, text: str) -> Response:
@@ -239,14 +241,7 @@ class Assistant:
                 query=pending.get("query", ""),
                 all_matching=bool(pending.get("all_matching")),
             )
-        if stage == "label_refs":
-            return self._label_refs(
-                text.strip(),
-                pending.get("label", ""),
-                query="",
-                all_matching=False,
-            )
-        return Response("State reset.", hint="Type 'help'.")
+        return Response("State reset.", hint="Type /help.")
 
     # -- reads ---------------------------------------------------------
     def _find(self, intent: Intent) -> Response:
@@ -426,10 +421,15 @@ class Assistant:
         """Suggest which current messages look like junk; never changes anything."""
         from .classify import classify_email
 
-        emails = self.last_results or self.backend.search("in:inbox", intent.limit)
+        if intent.query:
+            # The user named where to look ("primary", "newsletters", ...).
+            emails = self.backend.search(intent.query, intent.limit)
+            source = f"newest in {intent.scope or intent.query}"
+        else:
+            emails = self.last_results or self.backend.search("in:inbox", intent.limit)
+            source = ("the messages in your last list" if self.last_results
+                      else "the newest inbox messages")
         self.last_opened = None
-        source = ("the messages in your last list" if self.last_results
-                  else "the newest inbox messages")
         scored = []
         for email in emails:
             category = classify_email(email)
@@ -474,7 +474,7 @@ class Assistant:
             return [self.last_results[-1]]
         if not self.last_results:
             raise AssistantError(
-                "No current list. Run a find or 'analyze trash' first."
+                "No current list. Run a find or /trash first."
             )
         indexes = _resolve_refs(spec, len(self.last_results))
         return [self.last_results[index - 1] for index in indexes]

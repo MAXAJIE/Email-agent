@@ -24,10 +24,13 @@ AGENTS: dict[str, dict] = {
     "mailbox": {
         "role": "default",
         "description": "Reads or changes Gmail by running ONE Mailkeep command: find/search, "
-                       "open N, labels, analyze trash, label/unlabel, archive, mark read, "
+                       "open N, labels, 'find junk in <tab/category>' (junk review, e.g. 'find junk in primary'), "
+                       "'/trash' (only when the user asks about the Trash folder itself), label/unlabel, archive, mark read, "
                        "delete (to Trash), restore, show label NAME, rename label OLD to NEW. "
                        "Interpreted commands stop at an approval card.",
-        "args": {"command": "one exact Mailkeep command, e.g. 'find invoices from last month', "
+        "args": {"command": "one exact Mailkeep command; keep any number of messages the user asked for "
+                            "(e.g. 'find unread emails limit 1' for 'the latest unread mail'), "
+                            "e.g. 'find invoices from last month', "
                             "'archive 1,3', 'label 1-2 as Finance'"},
     },
     "drafter": {
@@ -141,16 +144,31 @@ def _loads(raw: str):
             raise exc from None
 
 
+def _first_object(text: str):
+    """First complete JSON object in text (prose/extra braces around it ok)."""
+    decoder = json.JSONDecoder()
+    for start in (m.start() for m in re.finditer(r"\{", text)):
+        try:
+            value, _ = decoder.raw_decode(text, start)
+        except ValueError:
+            continue
+        if isinstance(value, dict) and "action" in value:
+            return value
+    return None
+
+
 def parse(text: str) -> Decision:
     """Validate the model's decision. Raises ValueError on anything unusable."""
     text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S).strip()
-    match = _JSON.search(text)
-    if not match:
-        raise ValueError("the model did not return a JSON decision")
-    try:
-        data = _loads(match.group(0))
-    except ValueError as exc:
-        raise ValueError(f"the model returned invalid JSON ({exc})") from None
+    data = _first_object(text)
+    if data is None:
+        match = _JSON.search(text)
+        if not match:
+            raise ValueError("the model did not return a JSON decision")
+        try:
+            data = _loads(match.group(0))
+        except ValueError as exc:
+            raise ValueError(f"the model returned invalid JSON ({exc})") from None
     if not isinstance(data, dict):
         raise ValueError("the decision is not a JSON object")
     action = str(data.get("action") or "").strip().lower()
