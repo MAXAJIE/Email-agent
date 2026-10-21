@@ -76,6 +76,12 @@ _FILLER = {"a", "an", "the", "that", "this", "to", "for", "me", "please", "and",
 _NEW_REQUEST = re.compile(r"\b(?:new|another|separate|second)\s+(?:draft|e-?mail|mail|message)\b", re.I)
 
 
+def strict() -> bool:
+    """New drafts collect recipient, subject, purpose and details (asked once) before writing.
+    MAILKEEP_DRAFT_STRICT=off restores the older 'recipient + a sentence is enough' rule."""
+    return (setting("MAILKEEP_DRAFT_STRICT") or "on").strip().lower() not in {"0", "off", "false", "no"}
+
+
 def threshold() -> float:
     raw = setting("MAILKEEP_FRAME_THRESHOLD")
     try:
@@ -86,16 +92,25 @@ def threshold() -> float:
 
 
 WEIGHTS = {
-    "draft_new": {"to": 0.4, "purpose": 0.4, "subject": 0.2},
+    # A new email needs who / what about / why / the specifics. Details can be
+    # skipped ("none"), but Mailkeep asks for them once instead of inventing them.
+    "draft_new": {"to": 0.3, "subject": 0.25, "purpose": 0.25, "details": 0.2},
     "draft_reply": {"ref": 0.5, "purpose": 0.5},
 }
 QUESTIONS = {
     "to": "Who should I send it to? Please give the email address.",
-    "purpose": "What should the email say? A sentence or two about its purpose is enough.",
-    "subject": "What is the subject?",
+    "purpose": ("What should the email say? A sentence or two about its purpose is enough "
+                "(e.g. invite, follow up, request, apologise, thank, inform)."),
+    "subject": "What should the subject line be?",
+    "details": ("Any specific details to include? Dates, times, places, names, amounts, links, "
+                "or what you want the reader to do. Say 'none' to skip."),
     "ref": "Which message should I reply to? Give its number from the last list (e.g. 2).",
 }
-LABELS = {"to": "recipient", "purpose": "message", "subject": "subject", "ref": "message to reply to"}
+LABELS = {"to": "recipient", "purpose": "purpose", "subject": "subject", "details": "details",
+          "ref": "message to reply to"}
+_DETAILS = re.compile(r"\b(?:details?|specifics?|including|include|mention|note\s+that|deadline)\b"
+                      r"[:\s]*(?P<d>.+)$", re.I | re.S)
+_SKIP = re.compile(r"^\s*(?:no(?:ne|pe)?|skip|nothing|n/?a|nah|that'?s\s+(?:all|it)|no\s+details?)\s*[.!]?\s*$", re.I)
 
 
 def source_ref(text: str) -> str:
@@ -129,23 +144,34 @@ class Frame:
     turns: int = 0
 
     def score(self, model_available: bool = True) -> float:
+        if self.kind == "draft_new" and not strict():
+            return self._legacy_score(model_available)
         weights = WEIGHTS[self.kind]
         total = sum(w for slot, w in weights.items() if self.slots.get(slot))
         # Content taken from a listed email covers the message and its subject.
         if self.kind == "draft_new" and self.slots.get("source"):
-            if not self.slots.get("purpose"):
-                total += weights["purpose"]
-            if not self.slots.get("subject"):
-                total += weights["subject"]
+            for slot in ("purpose", "subject", "details"):
+                if not self.slots.get(slot):
+                    total += weights[slot]
         # A clear subject lets a model write a sensible body: half credit.
         if self.kind == "draft_new" and model_available and not self.slots.get("purpose") \
                 and self.slots.get("subject"):
             total += weights["purpose"] / 2
         return round(total, 2)
 
+    def _legacy_score(self, model_available: bool) -> float:
+        """Pre-strict rule (to 0.4, purpose 0.4, subject 0.2) for MAILKEEP_DRAFT_STRICT=off."""
+        weights = {"to": 0.4, "purpose": 0.4, "subject": 0.2}
+        has = lambda s: self.slots.get(s) or (s != "to" and self.slots.get("source"))
+        total = sum(w for slot, w in weights.items() if has(slot))
+        if model_available and not has("purpose") and self.slots.get("subject"):
+            total += 0.2
+        return round(total, 2)
+
     def missing(self) -> list[str]:
-        order = ["to", "ref", "purpose", "subject"]
-        filled = {"purpose", "subject"} if self.slots.get("source") else set()
+        order = (["to", "ref", "subject", "purpose", "details"] if strict()
+                 else ["to", "ref", "purpose", "subject"])
+        filled = {"purpose", "subject", "details"} if self.slots.get("source") else set()
         return [s for s in order if s in WEIGHTS[self.kind] and not self.slots.get(s)
                 and s not in filled]
 
@@ -154,18 +180,32 @@ class Frame:
             return False  # never guess a recipient
         if self.kind == "draft_reply" and not self.slots.get("ref"):
             return False
+        if self.kind == "draft_new" and not strict():
+            return self._legacy_score(model_available) >= threshold()
+        if self.kind == "draft_new" and not self.slots.get("source") and not self.slots.get("material"):
+            # Subject and purpose are always collected (asked for, never guessed);
+            # details are asked once and may be skipped with "none".
+            if not self.slots.get("subject") or not self.slots.get("purpose"):
+                return False
+            if not self.slots.get("details") and "details" not in self.slots.get("_asked", ()):
+                return False
+            return True
         return self.score(model_available) >= threshold()
 
     def question(self) -> str:
         missing = self.missing()
         slot = missing[0] if missing else "purpose"
         self.asked = slot
+        self.slots.setdefault("_asked", [])
+        if slot not in self.slots["_asked"]:
+            self.slots["_asked"].append(slot)
         if slot == "to" and self.slots.get("to_name"):
             return f"What is {self.slots['to_name']}'s email address?"
         return QUESTIONS[slot]
 
     def checklist(self) -> str:
-        have = lambda s: self.slots.get(s) or (s in {"purpose", "subject"} and self.slots.get("source"))
+        have = lambda s: self.slots.get(s) or (s in {"purpose", "subject", "details"}
+                                               and self.slots.get("source"))
         return ", ".join(f"{LABELS[s]} {'✓' if have(s) else '…'}" for s in WEIGHTS[self.kind])
 
 
@@ -210,6 +250,10 @@ def extract(kind: str, text: str) -> dict:
     purpose = _PURPOSE.search(text)
     if purpose:
         slots["purpose"] = _clean(purpose.group("p"))
+    if kind == "draft_new":
+        details = _DETAILS.search(text)
+        if details and len(details.group("d").split()) >= 2:
+            slots["details"] = _clean(details.group(0))[:2000]
     tone = next((t for t in _TONES if re.search(rf"\b{t}\b", text, re.I)), "")
     if tone:
         slots["tone"] = tone
@@ -231,14 +275,28 @@ def start(kind: str, text: str) -> Frame:
 
 def merge_answer(frame: Frame, text: str) -> Frame:
     """Fold the user's follow-up into the frame."""
+    asked = frame.asked
+    explicit_purpose = bool(_PURPOSE.search(text))
+    if asked == "details" and _SKIP.match(text):
+        frame.slots["details"] = "(none)"
+        frame.turns += 1
+        return frame
     for key, value in extract(frame.kind, text).items():
+        # An answer to "what is the subject?" is not also the purpose (and vice versa).
+        if key == "purpose" and asked and asked != "purpose" and not explicit_purpose:
+            continue
+        if key in ("subject", "details") and asked == "purpose" and frame.slots.get(key):
+            continue
+        if key == asked and key in ("subject", "details"):
+            continue  # the whole answer is stored below
         if key == "request" and frame.slots.get("request"):
             frame.slots["request"] = (frame.slots["request"] + "\n" + value)[:4000]
         else:
             frame.slots[key] = value
-    asked = frame.asked
     answer = _clean(text)
-    if asked and not frame.slots.get(asked) and answer:
+    if asked in ("subject", "details") and answer:
+        frame.slots[asked] = answer[:120] if asked == "subject" else answer[:2000]
+    elif asked and not frame.slots.get(asked) and answer:
         if asked == "to":
             email = EMAIL_RE.search(text)
             if email:
@@ -319,12 +377,45 @@ def revise_offline(body: str, instruction: str) -> tuple[str, str]:
     return body, ""
 
 
+_SUBJECT_EDIT = [
+    re.compile(r"\b(?:subject|title)(?:\s+line)?\s*(?:to|as|=|:|into|with|should\s+be|is\s+now)\s*"
+               r"(?P<v>.+?)(?=\.\s|[\n;]|\.?$)", re.I),
+    re.compile(r"\b(?:new|different)\s+(?:subject|title)(?:\s+line)?\s*(?:is|:|=)?\s+(?P<v>.+?)(?=\.\s|[\n;]|\.?$)", re.I),
+    re.compile(r"\b(?:rename|retitle)\s+(?:it|the\s+(?:email|mail|draft))\s+(?:to\s+)?(?P<v>.+?)(?=\.\s|[\n;]|\.?$)", re.I),
+]
+_FIELD_WORDS = {
+    "subject": re.compile(r"\b(?:subject|title|heading)\b", re.I),
+    "to": re.compile(r"\b(?:recipient|addressee|send\s+it\s+to\s+someone\s+else)\b", re.I),
+}
+
+
+def mentioned_fields(instruction: str) -> set[str]:
+    """Header fields a revision talks about ('change the subject' -> {'subject'})."""
+    return {name for name, rx in _FIELD_WORDS.items() if rx.search(instruction)}
+
+
+def wants_body_change(instruction: str) -> bool:
+    """False when the instruction only touches headers (subject / recipient)."""
+    rest = instruction
+    for rx in _SUBJECT_EDIT:
+        rest = rx.sub(" ", rest)
+    rest = EMAIL_RE.sub(" ", rest)
+    rest = re.sub(r"\b(?:please|can|could|you|change|update|edit|modify|set|make|replace|the|a|an|it|"
+                  r"subject|title|line|recipient|address|to|and|just|only|of|this|that|draft|mail|e-?mail|"
+                  r"clearer|better|shorter|nicer|new|different)\b", " ", rest, flags=re.I)
+    return bool(re.search(r"[A-Za-z]{3,}", rest))
+
+
 def revision_fields(instruction: str) -> dict:
     """Explicit subject / recipient changes inside a revision request."""
     changes = {}
-    subject = re.search(r"\bsubject(?:\s+line)?\s+(?:to|as|=|:)\s*(.+?)(?=[.;\n]|$)", instruction, re.I)
-    if subject:
-        changes["subject"] = _clean(subject.group(1))[:120]
+    for rx in _SUBJECT_EDIT:
+        subject = rx.search(instruction)
+        if subject:
+            value = _clean(subject.group("v"))
+            if value and value.lower() not in {"something", "something else", "it", "this", "that"}:
+                changes["subject"] = value[:120]
+            break
     if re.search(r"\b(?:recipient|send\s+it|address\s+it|instead|change\s+(?:the\s+)?to)\b", instruction, re.I):
         email = EMAIL_RE.search(instruction)
         if email:
