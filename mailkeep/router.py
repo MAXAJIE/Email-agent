@@ -42,6 +42,15 @@ AGENTS: dict[str, dict] = {
                  "subject": "subject line or ''",
                  "instructions": "what the email should say"},
     },
+    "reader": {
+        "role": "default",
+        "description": "Does something with the CONTENT of one listed/opened email: translate, "
+                       "summarise, analyse, explain, copy, extract details. Read-only.",
+        "args": {"ref": "row number from the last list, or 'last' for the opened mail, "
+                        "or '' when the user means the only/obvious one",
+                 "task": "exactly what to do with the content (e.g. 'translate to English and "
+                         "analyse briefly')"},
+    },
     "triage": {
         "role": "classifier",
         "description": "Classifies / prioritises the current list of messages (or unread mail).",
@@ -79,14 +88,22 @@ def system_prompt() -> str:
         "label are mailbox reads, not questions about a separate feature. Use 'show label NAME'. "
         "For rename/change a label name use 'rename label OLD to NEW', never a find command. "
         "Ask a clarifying question when a target/action is unclear; do not guess a search. "
-        "Commands are proposed for confirmation, so never say they already ran.\n\n"
+        "Commands are proposed for confirmation, so never say they already ran.\n"
+        "Understand the goal first. 'it', 'this', 'the info', 'the content' refer to the "
+        "email on screen (opened mail, or the most recent list). Translating, summarising, "
+        "analysing or copying an email IS a mailbox task: use the reader agent, never refuse it.\n"
+        "When the user asks for several actions (e.g. 'copy the mail, translate it, then draft "
+        "it to bob@x.com'), return a plan: the steps in order. Results of reader steps are "
+        "passed to a later drafter step automatically.\n\n"
         f"Available agents (JSON schema):\n{json.dumps(schema(), indent=1)}\n\n"
         f"Mailkeep command grammar for the mailbox agent:\n{HELP_TEXT}\n"
         "Row numbers refer to the most recent list shown to the user.\n\n"
         "Reply with ONE JSON object and nothing else, either\n"
         '{"action":"reply","reply":"<at most three short sentences>"}\n'
         "or\n"
-        '{"action":"agent","agent":"<name>","args":{...},"say":"<one short sentence>"}'
+        '{"action":"agent","agent":"<name>","args":{...},"say":"<one short sentence>"}\n'
+        "or, for several actions,\n"
+        '{"action":"plan","steps":[{"agent":"<name>","args":{...}}, ...],"say":"<one short sentence>"}'
     )
 
 
@@ -97,6 +114,7 @@ class Decision:
     agent: str = ""
     args: dict = field(default_factory=dict)
     say: str = ""
+    steps: list = field(default_factory=list)  # [(agent, args), ...] for "plan"
 
 
 _JSON = re.compile(r"\{.*\}|\{.*", re.S)
@@ -177,29 +195,65 @@ def parse(text: str) -> Decision:
         if not reply:
             raise ValueError("empty reply")
         return Decision("reply", reply=reply[:1500])
+    say = str(data.get("say") or "").strip()[:300]
     if action == "agent":
-        name = str(data.get("agent") or "").strip().lower()
-        if name not in AGENTS:
-            raise ValueError(f"unknown agent {name!r}")
-        raw = data.get("args") if isinstance(data.get("args"), dict) else {}
-        args = {k: str(v).strip() for k, v in raw.items()
-                if k in AGENTS[name]["args"] and v is not None and str(v).strip()}
-        if name == "mailbox" and not args.get("command"):
-            raise ValueError("mailbox agent needs a command")
-        return Decision("agent", agent=name, args=args, say=str(data.get("say") or "").strip()[:300])
+        name, args = _step(data)
+        return Decision("agent", agent=name, args=args, say=say)
+    if action == "plan":
+        raw_steps = data.get("steps")
+        if not isinstance(raw_steps, list) or not raw_steps:
+            raise ValueError("plan needs a non-empty steps list")
+        steps = [_step(item) for item in raw_steps[:MAX_STEPS] if isinstance(item, dict)]
+        if not steps:
+            raise ValueError("plan has no valid steps")
+        if len(steps) == 1:
+            return Decision("agent", agent=steps[0][0], args=steps[0][1], say=say)
+        return Decision("plan", say=say, steps=steps)
     raise ValueError(f"unknown action {action!r}")
 
 
-def context_block(history: list[tuple[str, str]], rows: list) -> str:
+MAX_STEPS = 5
+
+
+def _step(data: dict) -> tuple[str, dict]:
+    name = str(data.get("agent") or "").strip().lower()
+    if name not in AGENTS:
+        raise ValueError(f"unknown agent {name!r}")
+    raw = data.get("args") if isinstance(data.get("args"), dict) else {}
+    args = {k: str(v).strip() for k, v in raw.items()
+            if k in AGENTS[name]["args"] and v is not None and str(v).strip()}
+    if name == "mailbox" and not args.get("command"):
+        raise ValueError("mailbox agent needs a command")
+    return name, args
+
+
+def step_label(step: tuple[str, dict]) -> str:
+    """Short human label for one plan step."""
+    name, args = step
+    if name == "mailbox":
+        return args.get("command", "mailbox command")
+    if name == "reader":
+        target = f" (message {args['ref']})" if args.get("ref") else ""
+        return (args.get("task") or "read the message")[:80] + target
+    if name == "drafter":
+        to = args.get("to") or (f"reply to {args['reply_to']}" if args.get("reply_to") else "")
+        return "draft an email" + (f" to {to}" if to else "") + " (needs your approval)"
+    return (args.get("request") or name)[:80]
+
+
+def context_block(history: list[tuple[str, str]], rows: list, opened=None) -> str:
     lines = []
     if rows:
         lines.append(f"Most recent list shown to the user ({len(rows)} rows):")
-        for index, email in enumerate(rows[:15], start=1):
+        for index, email in enumerate(rows[:50], start=1):
             lines.append(f"  {index}. {str(getattr(email, 'sender', ''))[:40]} | "
                          f"{str(getattr(email, 'subject', ''))[:70]}")
     else:
         lines.append("No list has been shown yet.")
-    for user, bot in history[-3:]:
+    if opened is not None:
+        lines.append(f"Opened message ('last'): {str(getattr(opened, 'sender', ''))[:40]} | "
+                     f"{str(getattr(opened, 'subject', ''))[:70]}")
+    for user, bot in history:
         lines.append(f"User said: {user}")
         if bot:
             lines.append(f"Mailkeep said: {bot}")

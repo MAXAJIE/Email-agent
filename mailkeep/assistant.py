@@ -59,6 +59,19 @@ def _clip(value: str, width: int) -> str:
     return value if len(value) <= width else value[: width - 1] + "..."
 
 
+def normalize_body(value: str) -> str:
+    """The exact plain-text body Gmail stores: LF line endings, no trailing
+    spaces, at most one blank line in a row, no leading/trailing blank lines.
+    Used for BOTH the preview and the saved draft so they never differ."""
+    import re as _re
+
+    text = (value or "").replace("\r\n", "\n").replace("\r", "\n").replace("\t", "    ")
+    lines = [line.rstrip() for line in text.split("\n")]
+    text = "\n".join(lines)
+    text = _re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip("\n").strip() if text.strip() else ""
+
+
 def _table(emails: list[Email], *, start: int = 1) -> Table:
     rows = []
     for index, email in enumerate(emails, start=start):
@@ -664,7 +677,7 @@ class Assistant:
         return self._create_draft(draft)
 
     def _create_draft(self, draft: dict) -> Response:
-        body = draft.get("body", "").strip()
+        body = normalize_body(draft.get("body", ""))
         if not body:
             return Response("The draft is empty, so nothing was created.")
         preview = [
@@ -674,7 +687,8 @@ class Assistant:
         if draft.get("thread_id"):
             preview.append(f"Thread: {draft['thread_id']} (reply in place)")
         preview.append("")
-        preview.append(_clip(body, 600))
+        # Full body, line breaks and punctuation exactly as it will be saved.
+        preview.append(body)
         self.notify(
             Response(
                 "Draft preview (nothing has been created yet):\n" + "\n".join(preview),

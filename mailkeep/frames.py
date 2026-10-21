@@ -182,6 +182,9 @@ def is_draft_request(text: str) -> str:
         return "draft_reply"
     if _NEW_DRAFT.search(stripped):
         return "draft_new"
+    # "forward this mail to bob@x.com": Mailkeep cannot send, so a forward is a draft.
+    if re.search(r"\b(?:forward|fwd)\b", stripped, re.I) and EMAIL_RE.search(stripped):
+        return "draft_new"
     return ""
 
 
@@ -244,6 +247,10 @@ def merge_answer(frame: Frame, text: str) -> Frame:
             digits = re.search(r"\d+", text)
             if digits:
                 frame.slots["ref"] = digits.group(0)
+        elif asked == "source":
+            digits = re.search(r"\d+", text)
+            if digits:
+                frame.slots["source"] = digits.group(0)
         else:
             frame.slots[asked] = answer[:2000]
     frame.turns += 1
