@@ -32,6 +32,8 @@ class Approval:
     question: str
     snapshot: dict
     previews: list[Response] = field(default_factory=list)
+    phase: str = "write"
+    target_label_id: str = ""
 
     def public(self) -> dict:
         return {"id": self.id, "question": self.question, "command": self.command}
@@ -49,6 +51,49 @@ class Session:
         self.assistant = Assistant(backend, limit=limit)
         self.approval: Approval | None = None
         self.lock = threading.RLock()
+
+    def propose_command(self, text: str) -> Outcome:
+        """Ground an interpreted command and ask before executing reads.
+
+        Writes already have concrete preview/approval in Assistant. Explicit
+        slash commands use run_command instead, preserving their exact grammar.
+        """
+        from .intents import parse_intent
+        import re
+        with self.lock:
+            if self.approval is not None:
+                return Outcome([Response("Review the pending action first.")], self.approval)
+            intent = parse_intent(text, default_limit=self.assistant.limit)
+            if intent.kind == "find" and re.match(r"^(?:how|why|can|could|would|should)\b", text, re.I):
+                return Outcome([Response("I cannot confidently identify that mailbox action. "
+                                         "What data should I show, or what should I change?")])
+            if intent.kind in {"unknown", "noop"}:
+                return Outcome([Response("Which mailbox action do you want? "
+                                         "Tell me the target and the change, or the data to show.")])
+            if intent.kind not in {"find", "find_raw", "browse_label", "open", "labels",
+                                   "trash_report", "triage"}:
+                return self.run_command(text)
+            target_id = ""
+            if intent.kind == "browse_label":
+                label = self.assistant.existing_label(intent.label)
+                target_id = label.id
+                action = f"show up to {intent.limit} messages in label {label.name!r} ({label.id})"
+            elif intent.kind in {"find", "find_raw"}:
+                action = f"search Gmail for {intent.query or '(all mail)'!r}, up to {intent.limit} messages"
+            elif intent.kind == "open":
+                email = self.assistant._one(intent.refs)
+                action = f"open message {intent.refs}: {email.subject!r} ({email.id})"
+            elif intent.kind == "labels":
+                action = "list your Gmail labels"
+            elif intent.kind == "triage":
+                action = "review your messages and list the ones that look like junk"
+            else:
+                action = f"analyze up to {intent.limit} messages in Trash"
+            question = f"Did you mean to {action}?"
+            self.approval = Approval(secrets.token_hex(8), text, question,
+                                     self.assistant.snapshot(), phase="interpret",
+                                     target_label_id=target_id)
+            return Outcome([Response(question + " Approve to run, or Cancel.")], self.approval)
 
     def run_command(self, text: str) -> Outcome:
         """Run one Mailkeep command. Writes stop at a pending approval."""
@@ -106,6 +151,17 @@ class Session:
             if not approve:
                 self.assistant.pending = None
                 return Outcome([Response("Cancelled. Nothing changed.")])
+
+            if approval.phase == "interpret":
+                if approval.target_label_id:
+                    from .intents import parse_intent
+                    intent = parse_intent(approval.command)
+                    matches = [x for x in self.backend.labels()
+                               if x.id == approval.target_label_id and x.name == intent.label]
+                    if len(matches) != 1:
+                        return Outcome([Response("The label changed since the proposal. "
+                                                 "Ask again to review the current target.")])
+                return self.run_command(approval.command)
 
             fresh: list[Response] = []
             expected = _preview_ids(approval.previews)

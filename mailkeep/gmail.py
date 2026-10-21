@@ -195,7 +195,7 @@ class GmailClient:
         self._profile_email = str(profile.get("emailAddress", ""))
         return self._profile_email
 
-    def _list_ids(self, query: str, limit: int) -> list[str]:
+    def _list_ids(self, query: str, limit: int, *, label_id: str = "") -> list[str]:
         collected: list[str] = []
         token: str | None = None
         while len(collected) < limit:
@@ -205,6 +205,8 @@ class GmailClient:
             }
             if query:
                 params["q"] = query
+            if label_id:
+                params["labelIds"] = [label_id]
             if token:
                 params["pageToken"] = token
             try:
@@ -226,6 +228,10 @@ class GmailClient:
         if not message_ids:
             return []
         return self.fetch(message_ids)
+
+    def search_label(self, label_id: str, limit: int = 20) -> list[Email]:
+        """Use the API's labelIds filter, not an invented label-ID query."""
+        return self.fetch(self._list_ids("", limit, label_id=label_id))
 
     def fetch(self, message_ids: list[str]) -> list[Email]:
         if not message_ids:
@@ -309,6 +315,15 @@ class GmailClient:
         ]
 
     # -- writes --------------------------------------------------------
+    def rename_label(self, label_id: str, name: str) -> Label:
+        try:
+            updated = self._service.users().labels().patch(
+                userId="me", id=label_id, body={"name": name}).execute()
+        except Exception as exc:
+            raise GmailError(f"Could not rename label: {_error_reason(exc)}") from exc
+        return Label(id=str(updated.get("id", label_id)),
+                     name=str(updated.get("name", name)), type="user")
+
     def ensure_label(self, name: str) -> tuple[Label, bool]:
         existing = {label.name.lower(): label for label in self.labels()}
         if name.lower() in existing:

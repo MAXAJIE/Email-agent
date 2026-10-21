@@ -64,7 +64,10 @@ def test_chat_and_approval_round_trip(server):
     assert submit(base, app, "other text", "req-1")[0] == 400
     done = poll(base, app, "req-1")
     assert done["state"] == "completed"
-    assert done["outcome"]["messages"][-1]["table"]["rows"]
+    approval = done["outcome"]["approval"]
+    assert app.agent.session.assistant.last_results == []
+    _, searched = call(base, "/api/approve", {"id": approval["id"], "approve": True}, app.token)
+    assert searched["messages"][-1]["table"]["rows"]
     assert call(base, "/api/jobs/no-such-job", token=app.token)[0] == 404
     _, out = submit(base, app, "archive 1", "req-2")
     done = poll(base, app, "req-2")

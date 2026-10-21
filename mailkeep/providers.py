@@ -170,7 +170,7 @@ def chain(profile: str) -> list[tuple[llm.Preset, str]]:
     return out
 
 
-def complete(profile: str, system: str, user: str, *, max_tokens: int = 500,
+def complete(profile: str, system: str, user: str, *, max_tokens: int = 1280,
              timeout: float | None = None, cancel=None, on_fallback=None) -> tuple[str, llm.Preset]:
     """One completion for `profile`, falling back to the main model on failure.
 
@@ -185,7 +185,7 @@ def complete(profile: str, system: str, user: str, *, max_tokens: int = 500,
         try:
             text = fastllm.with_retries(
                 lambda n, p=preset: fastllm.complete(
-                    p, system, user, max_tokens=max_tokens, cancel=cancel,
+                    p, system, user, max_tokens=max_tokens * min(n, 3), cancel=cancel,
                     timeout=timeout or fastllm.attempt_timeout(p.timeout_seconds)),
                 what=f"{profile} via {preset.label} {preset.model}",
                 cancelled=(cancel.is_set if cancel is not None else (lambda: False)))

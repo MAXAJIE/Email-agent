@@ -33,6 +33,7 @@ class Intent:
     query: str = ""
     refs: str = ""
     label: str = ""
+    new_label: str = ""
     body: str = ""
     to: str = ""
     subject: str = ""
@@ -185,9 +186,31 @@ def _unlabel_intent(stripped: str, limit: int) -> Intent | None:
     return None
 
 
+def is_triage(text: str) -> bool:
+    """Junk-likelihood triage phrasing, not a request about the Trash folder."""
+    lowered = text.lower()
+    if "trash" not in lowered and "junk" not in lowered and "spam" not in lowered:
+        return False
+    if re.search(r"\bin\s+the\s+trash\b|\btrash\s+folder\b|\bin\s+trash\b|\bmy\s+trash\b"
+                 r"|\bthe\s+trash\b|\bempty\s+(?:my\s+|the\s+)?trash\b", lowered):
+        return False
+    return bool(re.search(
+        r"\b(?:most\s+|more\s+)?(?:likely|probably|possibly|plausibly|apt)\s+(?:to\s+be\s+)?"
+        r"(?:like\s+)?(?:a\s+|an\s+)?(?:trash|junk|spam)\b"
+        r"|\b(?:which|what)\s+(?:of\s+(?:my|the)\s+)?(?:e-?mails?|messages?|mail|ones?)\b"
+        r"[^?!.]*\b(?:trash|junk|spam)\b"
+        r"|\b(?:looks?|seems?|feels?)\s+(?:like\s+)?(?:trash|junk|spam)\b"
+        r"|\b(?:should|could|can)\s+be\s+(?:moved\s+to\s+)?(?:trash(?:ed)?|junk|spam)\b"
+        r"|\b(?:trash|junk|spam)\s+(?:candidates?|nominees?|picks?|material)\b"
+        r"|\b(?:e-?mails?|messages?|mail)\s+(?:that|which)\s+(?:look|are)\s+like\s+(?:trash|junk)\b",
+        text, re.I))
+
+
 def _trash_intent(stripped: str, limit: int) -> Intent | None:
     lowered = stripped.lower()
     if "trash" not in lowered:
+        return None
+    if is_triage(stripped):
         return None
     if re.search(r"\b(?:emails?|messages?|search|find|list)\b", lowered):
         return None
@@ -197,6 +220,37 @@ def _trash_intent(stripped: str, limit: int) -> Intent | None:
         return Intent(kind="trash_report", text=stripped, limit=max(limit, 200))
     if re.search(r"\b(?:empty|purge|clear)\b", lowered):
         return Intent(kind="trash_report", text=stripped, limit=max(limit, 200))
+    return None
+
+
+def label_request(text: str, *, default_limit: int = 20, labels=()) -> Intent | None:
+    """Recognize label management/browsing before generic search or chat.
+
+    An implicit name ("what is included in to-do") is only a label when
+    the actual mailbox contains that name. Unknown explicit names stay labels,
+    so the assistant asks instead of searching for the words 'label NAME'.
+    """
+    text = text.strip().rstrip("?.").strip()
+    rename = re.fullmatch(
+        r"(?:please\s+)?(?:rename|change)\s+(?:the\s+)?(?:label\s+)?"
+        r"(.+?)\s+to\s+(.+)", text, re.I)
+    if rename and (re.search(r"\blabel\b", text, re.I) or
+                   any(_clean_label(rename.group(1)).casefold() == x.name.casefold() for x in labels)):
+        return Intent("rename_label", text=text, label=_clean_label(rename.group(1)),
+                      new_label=_clean_label(rename.group(2)))
+    canonical = re.fullmatch(r"(?:show|browse)\s+label\s+(.+)", text, re.I)
+    match = canonical or re.fullmatch(
+        r"(?:show\s+me\s+)?what(?:'s|\s+is)\s+(?:included\s+)?(?:in|under)\s+"
+        r"(?:the\s+)?(.+)", text, re.I) or re.fullmatch(
+        r"(?:show(?:\s+me)?|list|find|get)\s+(?:all\s+)?(?:the\s+)?"
+        r"(?:emails?|messages?|contents|everything)\s+(?:in|under|with)\s+"
+        r"(?:the\s+)?(.+)", text, re.I)
+    if match:
+        name = _clean_label(re.sub(r"^label\s+", "", match.group(1), flags=re.I))
+        explicit = canonical or re.search(r"\blabel\b", match.group(1), re.I)
+        if explicit or any(name.casefold() == x.name.casefold() for x in labels):
+            return Intent("browse_label", text=text, label=name,
+                          limit=extract_limit(text, default_limit))
     return None
 
 
@@ -249,8 +303,15 @@ def parse_intent(text: str, *, default_limit: int = 20) -> Intent:
     if re.fullmatch(r"(?:list|show|what)?\s*(?:my\s+)?labels\??", lowered):
         return Intent(kind="labels", limit=limit)
 
+    managed = label_request(stripped, default_limit=default_limit)
+    if managed:
+        return managed
+
     if lowered in {"trash", "my trash", "the trash"}:
         return Intent(kind="trash_report", limit=max(limit, 200))
+
+    if is_triage(stripped):
+        return Intent(kind="triage", text=stripped, limit=limit)
 
     trash = _trash_intent(stripped, limit)
     if trash:

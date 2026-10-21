@@ -569,6 +569,13 @@ Documented, but the name misleads. Real streaming is
 
 ## 8. Gmail-first integration (current direction)
 
+- Interpreted mailbox commands pass through `Session.propose_command`; explicit
+  slash commands retain `run_command`. This separates intent confirmation from
+  execution while preserving the existing message-ID checked write previews.
+- Label browsing resolves real names to IDs and uses Gmail `labelIds`; label
+  renaming uses `labels.patch` with an ID-checked approval, so membership is not
+  changed and a replaced label cannot receive an old approval.
+
 - **Product goal:** an email agent built on OpenMinion; Gmail is the primary
   surface, with phone notifications and scheduled digests.
 - **Provider:** `taylorwilsdon/google_workspace_mcp` (MIT), run as a local

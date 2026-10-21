@@ -72,6 +72,60 @@ def attempt_timeout(preset_timeout: float | None = None) -> float:
     return _number("MAILKEEP_LLM_ATTEMPT_TIMEOUT", default, 5, 600)
 
 
+def check_after() -> float:
+    """Seconds of silence after which we re-check that the provider is still alive."""
+    return _number("MAILKEEP_LLM_CHECK_AFTER", 20, 3, 600)
+
+
+DEAD_STATES = ("offline", "auth_error", "model_missing", "error", "not_configured")
+
+
+class Watchdog:
+    """While a model call is pending, re-probe the provider every ``check_after`` s.
+
+    ``dead()`` returns a reason once a probe says the provider is gone, so a
+    caller can stop waiting early instead of sitting out the full timeout.
+    Probes run in their own thread: a slow probe never delays the caller.
+    """
+
+    def __init__(self, probe_fn: Callable[[], "Health"] | None, what: str,
+                 on_note: Callable[[str], None] | None = None, every: float | None = None):
+        self._probe = probe_fn
+        self._what = what
+        self._note = on_note or (lambda _m: None)
+        self._every = every if every is not None else check_after()
+        self._started = time.monotonic()
+        self._next = self._started + self._every
+        self._running: threading.Thread | None = None
+        self._verdict: str = ""
+
+    def _run(self, waited: int) -> None:
+        try:
+            health = self._probe()
+        except Exception as exc:  # noqa: BLE001
+            health = Health("offline", detail=describe_error(exc), checked_at=time.time())
+        if health.state in DEAD_STATES:
+            self._verdict = f"provider stopped responding after {waited} s ({health.state}: {health.detail})"
+            log_event("llm-recheck", f"{self._what}: waited {waited} s, provider is {health.state} -> stop waiting")
+        else:
+            log_event("llm-recheck", f"{self._what}: waited {waited} s, provider still {health.state}; keep waiting")
+            self._note(f"Still waiting for the model ({waited} s); provider is {health.state}")
+
+    def dead(self) -> str:
+        if self._probe is None:
+            return ""
+        now = time.monotonic()
+        if self._verdict:
+            return self._verdict
+        if now >= self._next and (self._running is None or not self._running.is_alive()):
+            self._next = now + self._every
+            waited = int(now - self._started)
+            self._running = threading.Thread(target=self._run, args=(waited,),
+                                             name="mailkeep-recheck", daemon=True)
+            self._running.start()
+        return self._verdict
+
+
 def retry_backoff() -> float:
     return _number("MAILKEEP_LLM_RETRY_BACKOFF", 0.5, 0, 10)
 
@@ -322,8 +376,9 @@ class HealthMonitor:
         return current.state in USABLE_STATES, current
 
 
-def complete(preset, system: str, user: str, *, max_tokens: int = 500,
-             timeout: float = 30.0, cancel: threading.Event | None = None) -> str:
+def complete(preset, system: str, user: str, *, max_tokens: int = 1280,
+             timeout: float = 30.0, cancel: threading.Event | None = None,
+             recheck: Callable[[], "Health"] | None | bool = True) -> str:
     """Single chat completion (no tools) against an OpenAI-compatible endpoint."""
     if preset is None:
         raise NotRetryable("no model provider configured")
@@ -355,19 +410,32 @@ def complete(preset, system: str, user: str, *, max_tokens: int = 500,
     worker = threading.Thread(target=run, name="mailkeep-complete", daemon=True)
     worker.start()
     deadline = time.monotonic() + timeout + 1
+    if recheck is True:
+        recheck = lambda: probe(preset)  # noqa: E731
+    dog = Watchdog(recheck or None, f"{getattr(preset, 'label', '?')} {preset.model}")
     while worker.is_alive():
         if cancel is not None and cancel.is_set():
             raise InterruptedError("Stopped")
         if time.monotonic() > deadline:
             raise TimeoutError(f"no answer within {int(timeout)} s")
+        reason = dog.dead()
+        if reason:
+            raise TimeoutError(reason)
         worker.join(0.1)
     if "error" in result:
         raise result["error"]
     try:
-        message = result["data"]["choices"][0]["message"]
+        choice = result["data"]["choices"][0]
+        message = choice["message"]
         text = (message.get("content") or "").strip()
+        finish = str(choice.get("finish_reason") or "")
     except (KeyError, IndexError, TypeError, AttributeError):
         raise RuntimeError("provider returned an unexpected response shape") from None
     if not text:
+        if finish == "length":
+            # Reasoning models can spend the whole budget thinking; the next
+            # attempt gets a bigger budget (see providers.complete).
+            raise RuntimeError(f"provider returned an empty answer (token limit {max_tokens} "
+                               "used up before the answer)")
         raise RuntimeError("provider returned an empty answer")
     return text

@@ -20,6 +20,8 @@ Search
 Organize
 • label 1-3 as Finance — add a label (created if needed)
 • unlabel 1-3 from Finance — remove a label
+• show label Finance — list messages in an existing label
+• rename label Finance to Accounts — rename an existing user label
 • restore 1-2 · archive 3 · mark 1 read · delete 4
 • analyze trash — trash report + restore candidates
 
@@ -122,6 +124,7 @@ class Assistant:
         self.last_query = ""
         self.last_opened: Email | None = None
         self.pending: dict | None = None
+        self.last_labels = []
 
     # -- state for deferred approval -------------------------------------
     def snapshot(self) -> dict:
@@ -130,6 +133,7 @@ class Assistant:
             "last_results": list(self.last_results),
             "last_query": self.last_query,
             "last_opened": self.last_opened,
+            "last_labels": list(self.last_labels),
         }
 
     def restore(self, state: dict) -> None:
@@ -137,6 +141,7 @@ class Assistant:
         self.last_results = list(state["last_results"])
         self.last_query = state["last_query"]
         self.last_opened = state["last_opened"]
+        self.last_labels = list(state.get("last_labels", []))
 
     # -- entry point ---------------------------------------------------
     def handle(self, text: str) -> Response:
@@ -165,6 +170,10 @@ class Assistant:
             return self._status()
         if intent.kind == "labels":
             return self._labels()
+        if intent.kind == "browse_label":
+            return self._browse_label(intent)
+        if intent.kind == "rename_label":
+            return self._rename_label(intent)
         if intent.kind == "unknown":
             return Response(
                 "I did not understand that.",
@@ -174,6 +183,8 @@ class Assistant:
             return self._find(intent)
         if intent.kind == "trash_report":
             return self._trash_report(intent)
+        if intent.kind == "triage":
+            return self._triage(intent)
         if intent.kind == "open":
             return self._open(intent)
         if intent.kind == "label":
@@ -257,8 +268,51 @@ class Assistant:
 
     def _labels(self) -> Response:
         labels = self.backend.labels()
+        self.last_labels = list(labels)
         rows = [[label.name, label.id, label.type] for label in labels]
         return Response(f"{len(labels)} labels.", table=Table(["Name", "ID", "Type"], rows))
+
+    def existing_label(self, name: str):
+        self.last_labels = self.backend.labels()
+        exact = [x for x in self.last_labels if x.name == name]
+        matches = exact or [x for x in self.last_labels if x.name.casefold() == name.casefold()]
+        if len(matches) != 1:
+            raise AssistantError(f"Which existing label do you mean by {name!r}? "
+                                 "Use its exact name from 'labels'.")
+        return matches[0]
+
+    def _browse_label(self, intent: Intent) -> Response:
+        label = self.existing_label(intent.label)
+        emails = self.backend.search_label(label.id, intent.limit)
+        self.last_results = emails
+        self.last_query = f"label:{label.name}"
+        self.last_opened = None
+        return Response(f"Found {len(emails)} message(s) in label {label.name!r} "
+                        f"({label.id}); showing up to {intent.limit}.",
+                        table=_table(emails) if emails else None)
+
+    def _rename_label(self, intent: Intent) -> Response:
+        label = self.existing_label(intent.label)
+        new_name = intent.new_label.strip()
+        if label.type != "user":
+            return Response(f"System label {label.name!r} cannot be renamed.")
+        if not new_name or new_name == label.name:
+            return Response("Choose a different, non-empty label name.")
+        if any(x.id != label.id and x.name.casefold() == new_name.casefold()
+               for x in self.last_labels):
+            return Response(f"Label {new_name!r} already exists. Nothing changed.")
+        question = f"Rename label {label.name!r} to {new_name!r}?"
+        self.notify(Response(question + " Message membership stays unchanged.",
+                             table=Table(["Current name", "New name", "ID"],
+                                         [[label.name, new_name, label.id]])))
+        if not self.confirm(question):
+            return Response("Cancelled. Nothing changed.")
+        updated = self.backend.rename_label(label.id, new_name)
+        self.last_labels = self.backend.labels()
+        verified = any(x.id == label.id and x.name == new_name for x in self.last_labels)
+        return Response(f"Renamed label {label.name!r} to {updated.name!r} ({updated.id})."
+                        if verified else "Gmail accepted the rename, but the new name could not "
+                        "be verified. Refresh labels before trying again.")
 
     def _status(self) -> Response:
         lines = [f"Account: {self.backend.profile_email()}"]
@@ -367,6 +421,43 @@ class Assistant:
             "restore table. Mailkeep never empties Trash permanently."
         )
         return Response("\n".join(lines), table=table, hint=hint)
+
+    def _triage(self, intent: Intent) -> Response:
+        """Suggest which current messages look like junk; never changes anything."""
+        from .classify import classify_email
+
+        emails = self.last_results or self.backend.search("in:inbox", intent.limit)
+        self.last_opened = None
+        source = ("the messages in your last list" if self.last_results
+                  else "the newest inbox messages")
+        scored = []
+        for email in emails:
+            category = classify_email(email)
+            weight = {"promotions": 3, "newsletters": 2, "notifications": 1}.get(category, 0)
+            if weight:
+                scored.append((weight, category, email))
+        scored.sort(key=lambda item: (
+            -item[0],
+            item[2].date.timestamp() if item[2].date else 0.0,
+            item[2].id,
+        ))
+        if not scored:
+            return Response(
+                f"Looked at {len(emails)} message(s) ({source}); none of them look like junk.",
+                hint="Junk signs: promotions, newsletters, automated notifications.",
+            )
+        self.last_results = [email for _weight, _category, email in scored]
+        rows = [
+            [str(index), _clip(email.sender, 24), _clip(email.subject, 40), category, email.id]
+            for index, (_weight, category, email) in enumerate(scored, start=1)
+        ]
+        return Response(
+            f"Of {len(emails)} message(s) ({source}), {len(scored)} look like junk, "
+            "most likely first: promotions are the strongest sign, then newsletters, "
+            "then automated notifications.",
+            table=Table(["#", "From", "Subject", "Type", "ID"], rows),
+            hint="Suggestions only. Use 'delete 1-2' to move one to Trash after review.",
+        )
 
     # -- references ----------------------------------------------------
     def _one(self, spec: str) -> Email:

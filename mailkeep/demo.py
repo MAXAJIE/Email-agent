@@ -364,6 +364,7 @@ class DemoGmailClient:
     def __init__(self):
         self._emails = _seed()
         self._labels = set(_SYSTEM_LABELS)
+        self._label_names: dict[str, str] = {}
         self.drafts: list[dict] = []
 
     def profile_email(self) -> str:
@@ -441,6 +442,18 @@ class DemoGmailClient:
         by_id = {email.id: email for email in self._emails}
         return [by_id[mid] for mid in message_ids if mid in by_id]
 
+    def search_label(self, label_id: str, limit: int = 20) -> list[Email]:
+        matched = [x for x in self._emails if label_id in x.labels
+                   and "TRASH" not in x.labels and "SPAM" not in x.labels]
+        matched.sort(key=lambda x: x.date.timestamp() if x.date else 0, reverse=True)
+        return matched[:limit]
+
+    def rename_label(self, label_id: str, name: str) -> Label:
+        if label_id not in self._labels or label_id in _SYSTEM_LABELS:
+            raise ValueError("Unknown or system label")
+        self._label_names[label_id] = name
+        return Label(id=label_id, name=name, type="user")
+
     def get_full(self, message_id: str) -> Email:
         found = self.fetch([message_id])
         if not found:
@@ -451,13 +464,16 @@ class DemoGmailClient:
         return [
             Label(
                 id=name,
-                name=name,
+                name=self._label_names.get(name, name),
                 type="system" if name in _SYSTEM_LABELS else "user",
             )
             for name in sorted(self._labels)
         ]
 
     def ensure_label(self, name: str) -> tuple[Label, bool]:
+        for label in self.labels():
+            if label.name.casefold() == name.casefold():
+                return label, False
         created = name not in self._labels
         self._labels.add(name)
         return Label(id=name, name=name, type="user"), created

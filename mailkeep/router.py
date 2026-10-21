@@ -25,7 +25,8 @@ AGENTS: dict[str, dict] = {
         "role": "default",
         "description": "Reads or changes Gmail by running ONE Mailkeep command: find/search, "
                        "open N, labels, analyze trash, label/unlabel, archive, mark read, "
-                       "delete (to Trash), restore. Writes stop at an approval card.",
+                       "delete (to Trash), restore, show label NAME, rename label OLD to NEW. "
+                       "Interpreted commands stop at an approval card.",
         "args": {"command": "one exact Mailkeep command, e.g. 'find invoices from last month', "
                             "'archive 1,3', 'label 1-2 as Finance'"},
     },
@@ -71,6 +72,11 @@ def system_prompt() -> str:
         "analysis). Answer yourself only for conversation or questions about Mailkeep.\n"
         "Never invent emails, senders, counts or results: you have not seen the mailbox; "
         "only agents can read it. Mailkeep never sends email.\n\n"
+        "Ground references in known Gmail labels. Questions about what is in a known "
+        "label are mailbox reads, not questions about a separate feature. Use 'show label NAME'. "
+        "For rename/change a label name use 'rename label OLD to NEW', never a find command. "
+        "Ask a clarifying question when a target/action is unclear; do not guess a search. "
+        "Commands are proposed for confirmation, so never say they already ran.\n\n"
         f"Available agents (JSON schema):\n{json.dumps(schema(), indent=1)}\n\n"
         f"Mailkeep command grammar for the mailbox agent:\n{HELP_TEXT}\n"
         "Row numbers refer to the most recent list shown to the user.\n\n"
@@ -90,7 +96,49 @@ class Decision:
     say: str = ""
 
 
-_JSON = re.compile(r"\{.*\}", re.S)
+_JSON = re.compile(r"\{.*\}|\{.*", re.S)
+
+
+def _repair(raw: str) -> str:
+    """Fix the JSON mistakes small models make: unescaped inner quotes,
+    raw newlines in strings, trailing commas and a missing closing brace."""
+    out, in_str, i = [], False, 0
+    while i < len(raw):
+        ch = raw[i]
+        if in_str:
+            if ch == "\\" and i + 1 < len(raw):
+                out.append(raw[i:i + 2]); i += 2; continue
+            if ch == '"':
+                rest = raw[i + 1:].lstrip()
+                if not rest or rest[0] in ",}]:":
+                    in_str = False; out.append(ch)
+                else:
+                    out.append('\\"')
+            elif ch == "\n":
+                out.append("\\n")
+            else:
+                out.append(ch)
+        else:
+            if ch == '"':
+                in_str = True
+            out.append(ch)
+        i += 1
+    fixed = "".join(out)
+    if in_str:
+        fixed += '"'
+    fixed = re.sub(r",\s*([}\]])", r"\1", fixed)
+    opens = fixed.count("{") - fixed.count("}")
+    return fixed + "}" * max(opens, 0)
+
+
+def _loads(raw: str):
+    try:
+        return json.loads(raw)
+    except ValueError as exc:
+        try:
+            return json.loads(_repair(raw))
+        except ValueError:
+            raise exc from None
 
 
 def parse(text: str) -> Decision:
@@ -100,7 +148,7 @@ def parse(text: str) -> Decision:
     if not match:
         raise ValueError("the model did not return a JSON decision")
     try:
-        data = json.loads(match.group(0))
+        data = _loads(match.group(0))
     except ValueError as exc:
         raise ValueError(f"the model returned invalid JSON ({exc})") from None
     if not isinstance(data, dict):

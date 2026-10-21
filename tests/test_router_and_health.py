@@ -129,6 +129,9 @@ def test_router_dispatches_mailbox_agent(monkeypatch):
                         '{"action":"agent","agent":"mailbox","args":{"command":"find invoices"}}')
     try:
         outcome = agent.chat("can you look for my invoices please")
+        assert outcome.approval is not None
+        assert agent.session.assistant.last_results == []
+        outcome = agent.chat("yes")
     finally:
         agent.close()
     assert any(r.table for r in outcome.responses)

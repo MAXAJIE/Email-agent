@@ -57,4 +57,6 @@ def test_agent_falls_back_to_rules_without_model(monkeypatch):
     agent = MailkeepAgent(Session(DemoGmailClient()))
     assert agent.mode == "rules"
     out = agent.chat("find invoices")
-    assert out.responses[-1].table is not None
+    assert out.approval is not None
+    done = agent.chat("yes")
+    assert done.responses[-1].table is not None

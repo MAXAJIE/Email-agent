@@ -45,7 +45,9 @@ _NAME_TO = re.compile(r"\bto\s+(?P<n>[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b")
 _REVISION = re.compile(
     r"\b(?:modify|change|revise|rewrite|re-?write|edit|update|tweak|adjust|redo|instead|"
     r"shorter|longer|more\s+\w+|less\s+\w+|tone|add|remove|mention|include|drop|"
-    r"make\s+it|subject\s+(?:to|line)|sign\s+(?:it|off))\b",
+    r"make\s+it|subject\s+(?:to|line)|sign\s+(?:it|off)|"
+    r"better|worse|improve|polish|bad|not\s+good|don'?t\s+like|"
+    r"one\s+more|again|different|version)\b",
     re.I,
 )
 _NEW_REQUEST = re.compile(r"\b(?:new|another|separate|second)\s+(?:draft|e-?mail|mail|message)\b", re.I)

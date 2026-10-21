@@ -58,7 +58,7 @@ PRESETS: dict[str, Preset] = {
     ),
     "gemini": Preset(
         "gemini", "Gemini", "openai",
-        "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "https://generativelanguage.googleapis.com/v1beta",
         "GEMINI_API_KEY", "gemini-2.5-flash",
         alt_key_envs=("GOOGLE_API_KEY",),
     ),

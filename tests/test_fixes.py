@@ -79,7 +79,7 @@ def test_access_denied_explains_test_users():
     "key,slot,base,env",
     [
         ("portal", "openai", "https://api.cortensor.app/v1", "CORTENSOR_API_KEY"),
-        ("gemini", "openai", "https://generativelanguage.googleapis.com/v1beta/openai/", "GEMINI_API_KEY"),
+        ("gemini", "openai", "https://generativelanguage.googleapis.com/v1beta/", "GEMINI_API_KEY"),
         ("openrouter", "openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
     ],
 )
